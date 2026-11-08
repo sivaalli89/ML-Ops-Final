@@ -109,6 +109,16 @@ def load_champion(name=MODEL_NAME, version=None):
     return bundle, info
 
 
+def register_from_files(model_file, metrics_file, params_file=None, name=MODEL_NAME, min_gain=0.0):
+    """Register the model that train.py saved, using the scores in metrics.json (written by --metrics-out)."""
+    metrics = json.loads(Path(metrics_file).read_text())
+    extra = [Path(p) for p in (metrics_file, params_file) if p and Path(p).exists()]
+    return register_candidate(
+        model_file, metrics["balanced_accuracy"], metrics.get("settings"), extra,
+        metrics={metric_name(variant) + "_mean": values["mean"] for variant, values in metrics["scores"].items()},
+        name=name, min_gain=min_gain)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", default=ROOT / "artifacts" / "model.joblib")
@@ -118,12 +128,7 @@ def main():
     parser.add_argument("--min-gain", type=float, default=0.0, help="how much better than the champion a model must be")
     args = parser.parse_args()
 
-    metrics = json.loads(Path(args.metrics).read_text())
-    extra = [Path(p) for p in (args.metrics, args.params) if Path(p).exists()]
-    result = register_candidate(
-        args.model, metrics["balanced_accuracy"], metrics.get("settings"), extra,
-        metrics={metric_name(variant) + "_mean": values["mean"] for variant, values in metrics["scores"].items()},
-        name=args.name, min_gain=args.min_gain)
+    result = register_from_files(args.model, args.metrics, args.params, args.name, args.min_gain)
 
     print(f"registered {args.name} version {result['version']} (semver {result['semver']}), score {result['score']:.3f}")
     if result["promoted"]:

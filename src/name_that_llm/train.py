@@ -81,6 +81,21 @@ def load_training_data(data_file, embedding_file=None):
     return df, embeddings
 
 
+def summarize_scores(scores):
+    """Mean and spread of each variant over the folds (scores is what cross_validate returns)."""
+    return pd.DataFrame({"mean": scores.mean(), "std": scores.std()}).round(3)
+
+
+def save_metrics(summary, params, path):
+    """Write the headline score and the settings used to a json file (the registry step reads it)."""
+    headline = "style + embeddings" if "style + embeddings" in summary.index else "style only"
+    metrics = {"balanced_accuracy": float(summary.loc[headline, "mean"]), "variant": headline,
+               "scores": summary.to_dict("index"), "settings": params or DEFAULT_PARAMS}
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(metrics, indent=2))
+    return metrics
+
+
 def load_params(path):
     """Read settings written by tune.py (or any json with style_c / embedding_c / embedding_weight)."""
     saved = json.loads(Path(path).read_text())
@@ -107,14 +122,10 @@ def main():
 
     if args.cv:
         scores = cross_validate(df["text"], df["model"], groups, embeddings, params=params)
-        summary = pd.DataFrame({"mean": scores.mean(), "std": scores.std()}).round(3)
+        summary = summarize_scores(scores)
         print(summary)
         if args.metrics_out:
-            headline = "style + embeddings" if "style + embeddings" in summary.index else "style only"
-            metrics = {"balanced_accuracy": float(summary.loc[headline, "mean"]), "variant": headline,
-                       "scores": summary.to_dict("index"), "settings": params or DEFAULT_PARAMS}
-            Path(args.metrics_out).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.metrics_out).write_text(json.dumps(metrics, indent=2))
+            save_metrics(summary, params, args.metrics_out)
             print("saved", args.metrics_out)
     if args.fit:
         bundle = fit_bundle(df["text"], df["model"], groups, embeddings, **params)

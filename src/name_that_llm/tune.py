@@ -122,6 +122,26 @@ def mlflow_callback():
     return log_trial
 
 
+def tune_and_save(texts, labels, groups, embeddings, trials, out_path, seed=0, n_jobs=5):
+    """The pipeline's tuning step: search, log to MLflow when MLFLOW_TRACKING_URI is set, write best_params.json."""
+    use_mlflow = bool(os.environ.get("MLFLOW_TRACKING_URI"))
+    callbacks = [mlflow_callback()] if use_mlflow else None
+    try:
+        result = tune(texts, labels, groups, embeddings, trials, seed=seed, n_jobs=n_jobs, callbacks=callbacks)
+        if use_mlflow:
+            import mlflow
+            mlflow.log_dict(result, "tuning_result.json")
+    finally:
+        if use_mlflow:
+            import mlflow
+            mlflow.end_run()
+    result["note"] = ("scores come from the same folds that picked the settings, so they are a little optimistic; "
+                      "run with --nested for an honest comparison")
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_path).write_text(json.dumps(result, indent=2))
+    return result
+
+
 def nested_cv(texts, labels, groups, embeddings=None, n_trials=8, n_outer=5, n_inner=3, n_jobs=3, seed=0):
     """Honest comparison of tuned versus default settings.
 
@@ -164,22 +184,8 @@ def main():
         print(pd.DataFrame({"mean": scores.mean(), "std": scores.std()}).round(3))
         return
 
-    use_mlflow = bool(os.environ.get("MLFLOW_TRACKING_URI"))   # set it to log the search to MLflow
-    callbacks = [mlflow_callback()] if use_mlflow else None
-    try:
-        result = tune(df["text"], df["model"], groups, embeddings, args.trials, seed=args.seed, n_jobs=args.jobs,
-                      callbacks=callbacks)
-        if use_mlflow:
-            import mlflow
-            mlflow.log_dict(result, "tuning_result.json")
-    finally:
-        if use_mlflow:
-            import mlflow
-            mlflow.end_run()
-    result["note"] = ("scores come from the same folds that picked the settings, so they are a little optimistic; "
-                      "run with --nested for an honest comparison")
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.out).write_text(json.dumps(result, indent=2))
+    result = tune_and_save(df["text"], df["model"], groups, embeddings, args.trials, args.out,
+                           seed=args.seed, n_jobs=args.jobs)
     print(json.dumps(result, indent=2))
 
 

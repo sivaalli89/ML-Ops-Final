@@ -1,7 +1,7 @@
 # What the "Name That LLM" workbook does (under the hood)
 
 This file explains the method and the model versioning. For how to install and run things, see the [README](README.md).
-The notebook `notebooks/name_that_llm.ipynb` walks through the method; your original version is in git history (first commit).
+The notebook `notebooks/name_that_llm.ipynb` runs the same pipeline as the Airflow DAG, section by section; your original version is in git history (first commit).
 
 ## Folder guide
 
@@ -9,7 +9,7 @@ The notebook `notebooks/name_that_llm.ipynb` walks through the method; your orig
 ML Ops Final/
 ├─ README.md, CONTRIBUTING.md   how to run it, how to contribute
 ├─ WORKBOOK_EXPLAINED.md        this file
-├─ notebooks/   name_that_llm.ipynb      self-contained walk-through of the method
+├─ notebooks/   name_that_llm.ipynb      the pipeline step by step (same tasks as the Airflow DAG)
 ├─ src/name_that_llm/                    the real code (grouping, features, model, train, tune, registry, predict)
 ├─ api/         FastAPI service that serves the model
 ├─ dags/        Airflow pipeline: group -> tune -> train -> evaluate -> register
@@ -52,8 +52,8 @@ plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features
 |---|---|
 | `data/train.csv` | 2,699 rows: `id, prompt_id, text, model` |
 | `data/test.csv` | only 3 rows here (a tiny sample): `id, text` only (no model, no prompt) |
-| `data/train_with_groups.csv` | train + a recovered `group` column (output of this notebook) |
-| `figures/group_recovery.png`, `figures/grouped_cv_baseline.png` | the two figures the notebook saves |
+| `data/train_with_groups.csv` | train + a recovered `group` column (output of the grouping step) |
+| `figures/group_recovery.png`, `figures/grouped_cv_baseline.png` | figures from the first version of the notebook |
 
 ### The hidden structure
 The data was generated as **~150 prompts × 18 models, one answer each** (150 × 18 ≈ 2,700; one model has 149 rows). So passages come in "families": the 18 answers to the same prompt discuss the same topic and differ only in author style.
@@ -77,7 +77,7 @@ text ──► TF-IDF (content words) ──► LSA 200-d ──► agglomerativ
  (honest score)                             (remove topic, keep style)      (1 model per slot)
 ```
 
-### Step A. Recover the prompt groups (sections 2–4)
+### Step A. Recover the prompt groups (notebook section 2)
 - **Topic vector:** TF-IDF restricted to *content* words (stopwords removed, `max_df=0.05` drops anything common, alphabetic ≥3 letters), then **TruncatedSVD to 200 dims** (LSA) and L2-normalise. Style words are deliberately removed so passages cluster by *subject*, not author.
 - **Clustering:** `AgglomerativeClustering(metric="cosine", linkage="average")`.
 - **Choosing k without labels:** `quality()` uses the known structure: a perfect cluster has ~18 passages and no model twice. Sweep result:
@@ -93,7 +93,7 @@ text ──► TF-IDF (content words) ──► LSA 200-d ──► agglomerativ
   Too few clusters → different prompts merge (repeats). Too many → prompts split (singletons). k = 146–150 balances both.
 - **Grading:** train.csv happens to include the true `prompt_id`, so **ARI = 0.977** against it (1.0 = perfect). The label-free purity metrics agree, which is what makes the method trustworthy for the test set, where no prompt ids exist.
 
-### Step B. Why validation must be grouped (section 5)
+### Step B. Why validation must be grouped
 Baseline model: char 2–5-gram TF-IDF + class-balanced logistic regression, scored by balanced accuracy (chance = 1/18 = 0.056).
 
 | Split | Balanced accuracy |
@@ -108,7 +108,7 @@ Adds function-word rates, punctuation/markdown counts, sentence/word length, and
 
 The "top phrases" table (one logistic regression on word 1–2-grams) shows each model's most distinctive tokens, e.g. Gemini → "profound", "fundamental"; GPT-5.6 variants → "may", "merely". Treat it as tendencies, since many top tokens are function words.
 
-### Step D. The main improvement (final code cell)
+### Step D. The main improvement (centering and assignment)
 Features: char n-gram TF-IDF (20k) + word 1–2-gram TF-IDF (15k), densified, fit on the training fold only.
 
 1. **Prompt-centering.** For every prompt group, subtract that group's mean feature vector from each member. All 18 answers share the topic, so the topic's contribution is the group mean and cancels; what remains is each author's deviation, which is style.
@@ -175,12 +175,13 @@ That check used 6 trials and 3 inner folds, a lighter search than the 12-trial r
 - **`prompt_id` is only used for grading** the clustering (ARI). The pipeline itself never reads it.
 - **The research PDF (`research/usenixsecurity25-pasquini.pdf`) is *LLMmap* (USENIX Security 2025).** It fingerprints 42 LLM versions at >95% accuracy, but with chosen probe questions and ~8 responses per model, so it is an easier setup than one free-form passage. Ideas that transfer: e5 embeddings (`multilingual-e5-large-instruct`) feeding a small transformer, contrastive training, and pooling several samples (your assignment step does a version of this). It does **not** contain the markdown, function-word or first-word features, and its Fig. 6 is a 2D map of learned signatures, not a phrase list. So the notebook's comments "style features from the paper" and "paper Fig. 6" must refer to some other paper, which I haven't identified.
 - **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook and the package; the two-stage classifier was dropped.)
-- **Notebook versus package.** The notebook has its own copy of the code and does not use the package, so running it
-  does not change the model the API serves.
+- **Notebook and package.** The notebook calls the package, so it runs exactly the code Airflow runs. By default it
+  trains and registers into a local MLflow store (`mlflow.db`), not the Docker registry, so it does not change the
+  model the API serves unless you point `MLFLOW_TRACKING_URI` at that server.
 - **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model), MLflow logging of `cv_scheme`, `k`, `cluster_quality`.
 
 ## 4. How to re-run
-See the [README](README.md): section A for plain Python, section B for Docker. The notebook reads `../data/train.csv`
+See the [README](README.md): section A for plain Python, section B for Docker. The notebook reads `data/train.csv`
 and builds dense ~35k-column matrices, so give it a few GB of RAM.
 
 ## 5. Model versioning: how it works
