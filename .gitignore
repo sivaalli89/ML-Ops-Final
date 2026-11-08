@@ -1,0 +1,17 @@
+# data is versioned with DVC (added later), never with git
+data/*
+!data/.gitkeep
+# model + tracking artifacts
+artifacts/
+mlruns/
+mlflow.db
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+# OS / editor
+.DS_Store
+.vscode/
