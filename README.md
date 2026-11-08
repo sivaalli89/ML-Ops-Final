@@ -26,15 +26,12 @@ real level. All numbers are local estimates, not Kaggle scores.
 
 ## Notebook or package?
 
-Both, and they run the same code.
-
-- **The training code lives in `src/name_that_llm/`.** The command line, the Airflow pipeline, the API and the tests
+- **The real code lives in `src/name_that_llm/`.** The command line, the Airflow pipeline, the API and the tests
   all use it.
-- **`notebooks/name_that_llm.ipynb` runs the same pipeline as the Airflow DAG, one task per section**, by calling that
-  package: check the data, find prompt groups, tune with Optuna, train, evaluate, register the model in MLflow, then try
-  the champion. Run it top to bottom to train and version a model from the notebook. It uses a local MLflow store
-  (`mlflow.db` in the project folder) unless you set `MLFLOW_TRACKING_URI` to another server, so it does not touch the
-  Docker registry by default. Set `TRIALS` in the environment (default 15) to change the number of Optuna trials.
+- **`notebooks/name_that_llm.ipynb` is an explanation, not part of the pipeline.** It walks through the method with
+  small, readable code (finding the prompt groups, the style features, centering, the one-model-each assignment, the
+  DistilBERT blend) and shows the scores. It has its own simplified copy of the code and is not connected to the
+  package, Airflow, Docker, Optuna or the model registry, so running it never changes the model the API serves.
 
 ## Two ways to work
 
@@ -64,7 +61,7 @@ uvicorn api.main:app --port 8000          # serves the model
 ```
 
 The DistilBERT numbers are read from `data/embeddings/distilbert.npy` if it exists. To compute them yourself,
-`pip install sentence-transformers` (needs PyTorch); the notebook computes them for you the first time (section 3). Without the file, the
+`pip install sentence-transformers` (needs PyTorch); the notebook's section 7 shows how. Without the file, the
 model trains and serves with the style features only.
 
 ### B. Run it in Docker

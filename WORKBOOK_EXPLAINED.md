@@ -1,7 +1,7 @@
 # What the "Name That LLM" workbook does (under the hood)
 
 This file explains the method and the model versioning. For how to install and run things, see the [README](README.md).
-The notebook `notebooks/name_that_llm.ipynb` runs the same pipeline as the Airflow DAG, section by section; your original version is in git history (first commit).
+The notebook `notebooks/name_that_llm.ipynb` explains the method with simple code and is not connected to the pipeline; your original version is in git history (first commit).
 
 ## Folder guide
 
@@ -9,7 +9,7 @@ The notebook `notebooks/name_that_llm.ipynb` runs the same pipeline as the Airfl
 ML Ops Final/
 ├─ README.md, CONTRIBUTING.md   how to run it, how to contribute
 ├─ WORKBOOK_EXPLAINED.md        this file
-├─ notebooks/   name_that_llm.ipynb      the pipeline step by step (same tasks as the Airflow DAG)
+├─ notebooks/   name_that_llm.ipynb      simple, self-contained explanation of the method
 ├─ src/name_that_llm/                    the real code (grouping, features, model, train, tune, registry, predict)
 ├─ api/         FastAPI service that serves the model
 ├─ dags/        Airflow pipeline: group -> tune -> train -> evaluate -> register
@@ -52,7 +52,7 @@ plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features
 |---|---|
 | `data/train.csv` | 2,699 rows: `id, prompt_id, text, model` |
 | `data/test.csv` | only 3 rows here (a tiny sample): `id, text` only (no model, no prompt) |
-| `data/train_with_groups.csv` | train + a recovered `group` column (output of the grouping step) |
+| `data/train_with_groups.csv` | train + a recovered `group` column (made by `python -m name_that_llm.grouping`) |
 | `figures/group_recovery.png`, `figures/grouped_cv_baseline.png` | figures from the first version of the notebook |
 
 ### The hidden structure
@@ -175,13 +175,12 @@ That check used 6 trials and 3 inner folds, a lighter search than the 12-trial r
 - **`prompt_id` is only used for grading** the clustering (ARI). The pipeline itself never reads it.
 - **The research PDF (`research/usenixsecurity25-pasquini.pdf`) is *LLMmap* (USENIX Security 2025).** It fingerprints 42 LLM versions at >95% accuracy, but with chosen probe questions and ~8 responses per model, so it is an easier setup than one free-form passage. Ideas that transfer: e5 embeddings (`multilingual-e5-large-instruct`) feeding a small transformer, contrastive training, and pooling several samples (your assignment step does a version of this). It does **not** contain the markdown, function-word or first-word features, and its Fig. 6 is a 2D map of learned signatures, not a phrase list. So the notebook's comments "style features from the paper" and "paper Fig. 6" must refer to some other paper, which I haven't identified.
 - **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook and the package; the two-stage classifier was dropped.)
-- **Notebook and package.** The notebook calls the package, so it runs exactly the code Airflow runs. By default it
-  trains and registers into a local MLflow store (`mlflow.db`), not the Docker registry, so it does not change the
-  model the API serves unless you point `MLFLOW_TRACKING_URI` at that server.
+- **Notebook and package.** The notebook is an explanation with its own simplified code. It is not connected to the
+  package, Airflow, Optuna or the registry, so running it does not change the model the API serves.
 - **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model), MLflow logging of `cv_scheme`, `k`, `cluster_quality`.
 
 ## 4. How to re-run
-See the [README](README.md): section A for plain Python, section B for Docker. The notebook reads `data/train.csv`
+See the [README](README.md): section A for plain Python, section B for Docker. The notebook reads `../data/train.csv`
 and builds dense ~35k-column matrices, so give it a few GB of RAM.
 
 ## 5. Model versioning: how it works

@@ -17,8 +17,8 @@ See the README (section A). You only need Docker if you work on the API containe
 
 - **No data, models or secrets in git.** `data/`, `artifacts/`, `mlruns/` and `.env` are ignored on purpose.
   Share data with DVC; share settings through `.env.example`.
-- **Keep the model code in `src/name_that_llm/`.** The notebook only calls the package (it runs the same steps
-  as the Airflow DAG), so change the code in the package, not in the notebook.
+- **Keep the model code in `src/name_that_llm/`.** The notebook is only an explanation with its own simple
+  code; it is not part of the pipeline.
 - **Test what you add.** Use the toy data in `tests/conftest.py` so tests stay fast and need nothing else.
 - **Bump the version when the model changes.** If you change the features or the model code, raise the minor
   number of `__version__` in `src/name_that_llm/__init__.py` (0.1.0 -> 0.2.0) in the same PR. Retrains
