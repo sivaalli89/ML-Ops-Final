@@ -10,8 +10,12 @@ ML Ops Final/
 ├─ README.md, CONTRIBUTING.md   how to run it, how to work on it
 ├─ WORKBOOK_EXPLAINED.md        this file
 ├─ notebooks/   name_that_llm.ipynb      the whole project, with results saved in it
-├─ data/        train.csv (not in git), embeddings/ (cached DistilBERT numbers)
-├─ Dockerfile, docker-compose.yml   JupyterLab in a container, for running the notebook the same way everywhere
+├─ data/        train.csv, test.csv and embeddings/ (cached DistilBERT numbers); kept by DVC, not by git
+├─ Dockerfile, docker-compose.yml, docker/   JupyterLab (B) and Airflow (C) in containers, for running the notebook the same way everywhere
+├─ dags/        run_notebook_dag.py: the Airflow trigger that runs the notebook
+├─ models/      model.joblib (kept by DVC) and model_info.json (version, score, data hash)
+├─ runs/        executed copies of the notebook, one per Airflow run (not in git)
+├─ .dvc/        DVC settings; data/*.dvc and models/*.dvc are the pointer files git keeps
 ├─ figures/     flow chart and charts used in this file
 ├─ research/    usenixsecurity25-pasquini.pdf
 └─ requirements.txt
@@ -174,8 +178,8 @@ hand-picked settings.
 - **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model).
 
 ## 4. How to re-run
-See the [README](README.md): run it with Python on your computer or in a Docker container. The notebook reads `../data/train.csv` and builds dense ~35k-column matrices, so give it a few GB of
-RAM. A full run takes about 6 to 8 minutes.
+See the [README](README.md): run it with Python on your computer, in a Docker container or under Airflow. The notebook reads `../data/train.csv` and builds dense
+~55k-column matrices, so give it a few GB of RAM. A full run takes about 8 minutes on your own Python and 12 to 15 in a container (the README explains why).
 
 ## 5. The earlier pipeline version (archived)
 
@@ -197,3 +201,21 @@ All of it is saved under the git tag `archive/pipeline-version`. To look at it: 
 What was and was not verified: the Python code and the tests were run on the real data, and the registry was exercised
 against a local MLflow store. The Docker images, the MLflow server and the Airflow pipeline were written but never built or run.
 The one lasting finding is the honest tuning result in Step G: Optuna did not improve on the hand-picked settings.
+
+## 6. Triggering the notebook, and versioning data and models
+
+**Trigger.** A notebook does nothing until someone runs it. Airflow (README, Option C) is the trigger: it runs the notebook on a
+button press or a schedule, logs each run, and saves an executed copy of the notebook for that run in `runs/`. The DAG is a
+single short file, `dags/run_notebook_dag.py`, with three tasks: check the data is there, run the notebook, print the model info.
+
+**Data versioning.** `train.csv` is tracked by DVC, which stores the file by its content hash and gives git a small pointer.
+Changing the data produces a new hash and, after `dvc add` and a commit, a new version (`data-v2`). Going back is a git
+checkout plus `dvc checkout`.
+
+**Model versioning.** Notebook section 8 trains on all passages and saves `models/model.joblib` and `models/model_info.json`.
+The info file holds the version number, the cross-validated score, the settings and the hash of the training data, so a
+model always says which data produced it. Versioning the file works the same way as for data (`dvc add`, commit, tag
+`model-v0.1.0`).
+
+**What this does not do.** It records and restores versions. It does not decide automatically which model is in service or
+refuse a worse one; the archived pipeline version had an MLflow registry that did (section 5).
