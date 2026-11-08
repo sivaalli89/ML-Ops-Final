@@ -1,23 +1,19 @@
 # What the "Name That LLM" workbook does (under the hood)
 
-Files: `notebooks/name_that_llm_groups (1).ipynb` (your original, unchanged) and `notebooks/name_that_llm_simple.ipynb` (short rewrite with the improvements).
+The one notebook is `notebooks/name_that_llm.ipynb`. (Your original version is still in git history, first commit.)
 
 ## Folder guide
 
 ```
 ML Ops Final/
 ├─ WORKBOOK_EXPLAINED.md   this file
-├─ data/        train.csv, test.csv, train_with_groups.csv (made by the notebooks)
-├─ notebooks/   name_that_llm_groups (1).ipynb      your original (unchanged)
-│               name_that_llm_simple.ipynb          short rewrite, includes the skeleton features
-├─ scripts/     two_stage_pipeline.py, plot_models_2d.py, plot_models_2d_nonpca.py
+├─ data/        train.csv, test.csv, train_with_groups.csv (made by the notebook), embeddings/ (saved DistilBERT numbers)
+├─ notebooks/   name_that_llm.ipynb      the one notebook (full pipeline + ensemble)
 ├─ figures/     flow chart, 2D model charts, notebook plots
-├─ results/     cluster_sweep.csv, two_stage_results.csv
 └─ research/    usenixsecurity25-pasquini.pdf
 ```
 
-Start with `notebooks/name_that_llm_simple.ipynb`. Scripts can be run from any folder.
-Your original notebook still reads `train.csv` from its own folder: to run it from `notebooks/`, change its `TRAIN_PATH` to `"../data/train.csv"`.
+Open `notebooks/name_that_llm.ipynb` and run it top to bottom.
 
 ## 0. The whole thing in one picture
 
@@ -38,7 +34,7 @@ flowchart TD
 ```
 
 **Score ladder** (balanced accuracy, grouped CV, chance = 0.056):
-plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features **0.466**.
+plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features 0.466 → logistic regression C=1 0.477 → + 10% DistilBERT blend **0.521**.
 
 **Plain-English summary:** the same 150 questions were put to 18 AIs. The test uses new questions, so we can't learn "topic → AI". Instead we find which passages answer the same question, subtract what they have in common (the topic), and look at what's left: each AI's writing habits. Then we use the rule "each AI answers each question once" to clean up the guesses.
 
@@ -51,7 +47,6 @@ plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features
 | `data/train.csv` | 2,699 rows: `id, prompt_id, text, model` |
 | `data/test.csv` | only 3 rows here (a tiny sample): `id, text` only (no model, no prompt) |
 | `data/train_with_groups.csv` | train + a recovered `group` column (output of this notebook) |
-| `results/cluster_sweep.csv` | quality table for each number of clusters tried |
 | `figures/group_recovery.png`, `figures/grouped_cv_baseline.png` | the two figures the notebook saves |
 
 ### The hidden structure
@@ -121,7 +116,7 @@ Features: char n-gram TF-IDF (20k) + word 1–2-gram TF-IDF (15k), densified, fi
 
 So each trick adds roughly +0.07 and +0.04 respectively; ~7.5× chance.
 
-### Step E. Two-stage classifier and "skeleton" features (added later, `scripts/two_stage_pipeline.py`)
+### Step E. Two-stage classifier and "skeleton" features (an experiment, not in the notebook)
 Same 5-fold GroupKFold, so numbers compare directly with Step D.
 
 - **New feature block, "function-word skeleton".** Every word outside the 150 most common becomes `W`; punctuation stays. `The cat sat; it was warm.` → `the W W ; it was W .` Its 1–4-grams describe sentence rhythm and syntax with almost no topic.
@@ -148,12 +143,27 @@ Same 5-fold GroupKFold, so numbers compare directly with Step D.
 
 Takeaway: the models cluster into families, while telling models apart inside a family is the hard part. The 2D charts show only a thin slice (PCA axes cover ~1.5% of style variance), so overlap in 2D doesn't mean the models are inseparable in the full feature space. For honest accuracy, use the cross-validated scores, not how clean a picture looks.
 
+### Step G. Better models and ensembles (experiments, with the winner in the notebook)
+Same 5-fold GroupKFold. Baseline = skeleton features, centring, assignment.
+
+| Idea | Score | Verdict |
+|---|---|---|
+| Logistic regression C=1 instead of 5 | 0.477 | small gain, kept |
+| Linear SVM / averaging LR + SVM | 0.466 | no help |
+| Averaging per-feature-block models | 0.474 | no help (same kind of signal) |
+| MiniLM embeddings alone | 0.205 | weak |
+| DistilBERT embeddings alone | 0.396 | weaker than TF-IDF |
+| TF-IDF + 50/50 embeddings | worse | hurts |
+| **TF-IDF + 10% DistilBERT** | **0.521** | better in 5/5 folds, kept |
+| TF-IDF + 20% / 30% DistilBERT | 0.503 / 0.473 | too much weight hurts |
+
+The DistilBERT weight was picked on the same folds, so 0.521 is a little optimistic (a realistic gain is perhaps +0.02 to +0.04). This blend is section 7 of the notebook. These scores are local cross-validation estimates, not Kaggle scores.
+
 ## 3. Things to know
 - **Test-time requirement.** Centering and assignment both need the test passages grouped by prompt. You must cluster `data/test.csv` with the same recipe (it's small, so check the cluster sizes carefully: assignment assumes ≤18 per group, and 18 distinct models per group).
 - **`prompt_id` is only used for grading** the clustering (ARI). The pipeline itself never reads it.
-- **Optional e5 embeddings.** `E5_PATH` swaps TF-IDF+LSA for a sentence-transformer; not run here. It may help with the ~5% of clusters that still merge.
 - **The research PDF (`research/usenixsecurity25-pasquini.pdf`) is *LLMmap* (USENIX Security 2025).** It fingerprints 42 LLM versions at >95% accuracy, but with chosen probe questions and ~8 responses per model, so it is an easier setup than one free-form passage. Ideas that transfer: e5 embeddings (`multilingual-e5-large-instruct`) feeding a small transformer, contrastive training, and pooling several samples (your assignment step does a version of this). It does **not** contain the markdown, function-word or first-word features, and its Fig. 6 is a 2D map of learned signatures, not a phrase list. So the notebook's comments "style features from the paper" and "paper Fig. 6" must refer to some other paper, which I haven't identified.
-- **Not done yet:** e5 embeddings (needs torch and a ~2 GB model download), contrastive training, and merging the skeleton features into the notebook itself. They exist only in `scripts/two_stage_pipeline.py`.
+- **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook; the two-stage classifier was dropped.)
 - **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model), MLflow logging of `cv_scheme`, `k`, `cluster_quality`.
 
 ## 4. How to re-run
