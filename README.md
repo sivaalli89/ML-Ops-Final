@@ -9,11 +9,28 @@ The long explanation is in [WORKBOOK_EXPLAINED.md](WORKBOOK_EXPLAINED.md), and t
 [notebooks/name_that_llm.ipynb](notebooks/name_that_llm.ipynb).
 
 **Score** (balanced accuracy on prompts the model has never seen, 5-fold grouped CV, chance = 0.056):
-TF-IDF style model 0.477, with a 10% DistilBERT blend 0.521. This is a local estimate, not a Kaggle score.
+
+| Setup | Score |
+|---|---|
+| TF-IDF style model | 0.477 |
+| + 10% DistilBERT blend (hand-picked settings) | 0.521 |
+| + Optuna-tuned settings | 0.532 (optimistic: see below) |
+
+The tuned score is measured on the same folds that picked the settings, so it is a little too good. For a fair
+comparison run `python -m name_that_llm.tune --nested`, which tunes inside each fold and tests on prompts the search
+never saw. All numbers are local estimates, not Kaggle scores.
+
+## Notebook or package?
+
+- **The training code lives in `src/name_that_llm/`.** The command line, the Airflow pipeline, the API and the tests
+  all use it. Tuning and the final training run from there.
+- **`notebooks/name_that_llm.ipynb` is a self-contained walk-through** of the method (clustering, features,
+  centering, assignment, the DistilBERT blend). It has its own copy of the code and does not use the package or
+  Optuna, so running it does not change the model the API serves.
 
 ## Two ways to work
 
-You do **not** need Docker to develop or test. Docker is only for running the API and, later, the full stack.
+You do **not** need Docker to develop or test. Docker is for running the API and the Airflow training pipeline.
 
 ### A. Everyday development (no Docker)
 
@@ -33,7 +50,7 @@ competition page; a shared DVC remote will replace this step). Then:
 ```bash
 python -m name_that_llm.grouping          # finds the prompt groups -> data/train_with_groups.csv
 python -m name_that_llm.tune --trials 15  # Optuna searches the settings -> artifacts/best_params.json
-python -m name_that_llm.train --cv        # honest score, about 1 minute (add --params artifacts/best_params.json)
+python -m name_that_llm.train --cv        # score on unseen prompts, about 1 minute (add --params artifacts/best_params.json)
 python -m name_that_llm.train --fit       # trains on everything, saves artifacts/model.joblib
 uvicorn api.main:app --port 8000          # serves the model
 ```
@@ -56,6 +73,9 @@ train, evaluate. Switch it on and click *Trigger DAG w/ config* to choose the nu
 `train.csv` and the embeddings from `./data` and writes the model, `best_params.json` and `metrics.json` to
 `./artifacts`, which is the same folder the API reads. Restart the API (or just `docker compose restart api`) to
 load a newly trained model.
+
+Each run overwrites `artifacts/model.joblib`, even if the new score is worse. Keeping only better models comes
+with the MLflow registry (planned).
 
 Give Docker about 8 GB of memory: tuning builds large feature tables. The images are slim and have no PyTorch; the
 DistilBERT numbers come from the saved `data/embeddings/distilbert.npy`.
@@ -86,6 +106,14 @@ tests/               unit + end-to-end tests on toy data
 notebooks/           the one explanatory notebook
 Dockerfile, docker-compose.yml
 ```
+
+## Status
+
+| Part | State |
+|---|---|
+| Package, tuning, API, tests | Working. 25 tests pass, and the API and the tuning have been run on the real data. |
+| Docker images and the Airflow pipeline | **Written but not yet run.** The compose file and DAG parse, but nobody has built the images or started Airflow. Expect to fix small problems on first run. |
+| MLflow tracking and registry, monitoring and drift checks, CI | Not built yet. |
 
 ## Contributing
 
