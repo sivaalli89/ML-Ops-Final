@@ -33,6 +33,19 @@ real level. All numbers are local estimates, not Kaggle scores.
   DistilBERT blend) and shows the scores. It has its own simplified copy of the code and is not connected to the
   package, Airflow, Docker, Optuna or the model registry, so running it never changes the model the API serves.
 
+### Which should I run?
+
+| I want to... | Use |
+|---|---|
+| understand how the method works | the notebook (`notebooks/name_that_llm.ipynb`) |
+| train a model myself, once | `python -m name_that_llm.train --fit` |
+| have training run automatically, with versions | Airflow (`docker compose --profile pipeline up`) |
+| get predictions from a trained model | the API (`docker compose up`) |
+
+The `.py` files do the same steps as the notebook, but in a form that a scheduler, a web server and the tests can
+run. If you are new to them, start with the plain-English guide:
+[WORKBOOK_EXPLAINED.md, section 6](WORKBOOK_EXPLAINED.md#6-a-plain-english-guide-to-the-py-files).
+
 ## Two ways to work
 
 You do **not** need Docker to develop or test. Docker is for running the API and the Airflow training pipeline.

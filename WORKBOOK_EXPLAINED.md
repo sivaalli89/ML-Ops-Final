@@ -243,3 +243,66 @@ To make the rollback permanent, point the `champion` alias back at that version 
 - Fold-to-fold scores wobble by about 0.02, so a difference of 0.003 is noise. With the default `--min-gain 0`, a tie
   promotes the newer model. Use `--min-gain 0.01` to demand a real improvement before anything changes.
 - The registry stores the model file as an artifact and does not run it. It is the record of what exists and what is in service.
+
+
+## 6. A plain-English guide to the .py files
+
+### Notebook or .py files?
+
+For **learning and explaining**, the notebook is better: you read a step, run it, and see the result right under it. That is
+why `notebooks/name_that_llm.ipynb` exists, and why it is kept simple.
+
+For **running the project for real**, you need `.py` files, because:
+
+- **Airflow** runs commands on a schedule, and a notebook is not a command.
+- **The API** has to be a program that stays running and answers requests.
+- **The tests** run automatically on every change, which they cannot do with a notebook.
+- **Teammates** can review and merge changes to a `.py` file line by line; a notebook's saved output makes that messy.
+
+So: notebook to understand it, `.py` files to run it. Both do the same steps in the same order.
+
+### What `python -m name_that_llm.train` means
+
+`name_that_llm` is a folder of `.py` files (a *package*). `python -m name_that_llm.train --cv` says "run the file `train.py`
+inside it, and give it the option `--cv`". Each file that can be run this way ends with a small `main()` function, which is the
+part that reads the options and runs. Everything else in a file is a tool that `main()` or another file uses.
+
+### The files, in plain words
+
+| File | What it does | Same as notebook |
+|---|---|---|
+| `src/name_that_llm/grouping.py` | Finds which passages answer the same prompt (`cluster_passages`), checks the groups are good (`cluster_quality`), removes the shared topic (`center_by_group`), and makes each model appear once per group (`assign_one_model_each`). Run it with `python -m name_that_llm.grouping` to write `data/train_with_groups.csv`. | sections 2 and 5 |
+| `src/name_that_llm/features.py` | Turns text into numbers: the three TF-IDF views (characters, words, skeleton) in `StyleFeatures`, the skeleton helper `make_skeleton`, and DistilBERT numbers in `embed_passages`. | sections 4 and 7 |
+| `src/name_that_llm/model.py` | `ModelBundle` is the trained model in one box: the features plus the two classifiers. `blend` mixes their answers 90/10. | section 7 |
+| `src/name_that_llm/train.py` | `fit_bundle` trains a model; `cross_validate` gives the honest score on prompts it has not seen. Run with `--cv` to score and `--fit` to train and save. | section 6 |
+| `src/name_that_llm/tune.py` | Uses Optuna to try different settings and see which score best. Run with `python -m name_that_llm.tune`. | *not in the notebook* |
+| `src/name_that_llm/registry.py` | Model versioning: saves each trained model as a numbered version in MLflow and decides if it becomes the champion (section 5 above). | *not in the notebook* |
+| `src/name_that_llm/predict.py` | `predict_models`: give it passages, get back a guessed model for each one. This is what the API calls. | the idea behind section 6 |
+| `src/name_that_llm/__init__.py` | Marks the folder as a package, and holds two small things: the version number and the project folder. | |
+| `api/main.py` | The web service: `/health` says if it is running and which model it loaded, `/predict` takes passages and returns guesses. | *not in the notebook* |
+| `dags/name_that_llm_dag.py` | The Airflow pipeline: check the data, group, tune, train, evaluate, register, as six tasks in order. | *not in the notebook* |
+| `tests/*.py` | Automatic checks that each piece still works, run with `pytest`. They use made-up data, so they take seconds. | |
+
+Support files that are not code: `requirements.txt` and `pyproject.toml` list the libraries needed, and `Dockerfile`,
+`docker/airflow.Dockerfile` and `docker-compose.yml` describe how to run the pieces in containers.
+
+### Where to start reading
+
+You do not need to read them all. A good order is:
+
+1. `grouping.py`: short, and it holds the two key tricks (centering and one-model-each).
+2. `features.py`: how a passage becomes numbers.
+3. `train.py`: how those pieces are put together and scored. Read `fit_bundle` and `cross_validate` first.
+
+Skip `tune.py`, `registry.py`, the API and the DAG until you need them. They are extra machinery around the same model, not
+different logic. If a function's job is unclear, look for the same step in the notebook: the table above says where.
+
+### Which one should I run?
+
+| I want to... | Run |
+|---|---|
+| see how it works | open the notebook and run it top to bottom |
+| train a model by hand | `python -m name_that_llm.grouping`, then `python -m name_that_llm.train --cv --fit` |
+| search for better settings | `python -m name_that_llm.tune --trials 15` |
+| have it all happen automatically and versioned | start Airflow and trigger the DAG (README, section B) |
+| get predictions | start the API and send passages to `/predict` |
