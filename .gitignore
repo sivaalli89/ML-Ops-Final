@@ -1,6 +1,7 @@
-# data stays out of git (the competition data is not ours to share)
-data/*
-!data/.gitkeep
+# data and models are versioned with DVC: git keeps only the small .dvc pointer files.
+# DVC adds the tracked files to data/.gitignore and models/.gitignore itself; this is for stray leftovers.
+data/train_with_groups.csv
+data/ran.ipynb
 
 # python / notebooks
 __pycache__/
