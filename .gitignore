@@ -3,6 +3,10 @@
 data/train_with_groups.csv
 data/ran.ipynb
 
+# executed copies of the notebook that Airflow saves for each run
+runs/*
+!runs/.gitkeep
+
 # python / notebooks
 __pycache__/
 *.pyc
