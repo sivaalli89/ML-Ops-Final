@@ -1,0 +1,17 @@
+# docker compose up --build        (needs artifacts/model.joblib: run `python -m name_that_llm.train --fit` first)
+# More services (Airflow, MLflow, Prometheus, Grafana) are added here in later steps.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/models:ro
+    environment:
+      MODEL_PATH: /models/model.joblib
+      USE_EMBEDDINGS: "false"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

@@ -48,3 +48,28 @@ def cluster_quality(groups, models=None, prompt_ids=None):
     if prompt_ids is not None:
         quality["ari"] = float(adjusted_rand_score(prompt_ids, groups))
     return quality
+
+
+def main():
+    """python -m name_that_llm.grouping : make data/train_with_groups.csv from data/train.csv"""
+    import argparse
+    from pathlib import Path
+
+    import pandas as pd
+
+    root = Path(__file__).resolve().parents[2]
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--data", default=root / "data" / "train.csv")
+    parser.add_argument("--out", default=root / "data" / "train_with_groups.csv")
+    args = parser.parse_args()
+
+    df = pd.read_csv(args.data).dropna(subset=["text", "model"]).reset_index(drop=True)
+    df["group"] = cluster_passages(df["text"], n_models=df["model"].nunique())
+    prompt_ids = df["prompt_id"] if "prompt_id" in df else None   # only used to grade the groups
+    print(cluster_quality(df["group"], df["model"], prompt_ids))
+    df.to_csv(args.out, index=False)
+    print("saved", args.out)
+
+
+if __name__ == "__main__":
+    main()

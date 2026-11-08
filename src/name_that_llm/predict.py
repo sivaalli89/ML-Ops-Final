@@ -17,14 +17,18 @@ class Prediction:
     probs: np.ndarray
 
 
-def predict_models(bundle: ModelBundle, texts, embeddings=None, groups=None):
+def predict_models(bundle: ModelBundle, texts, embeddings=None, groups=None, use_embeddings=True):
     """Centering and assignment need the other passages from the same prompts.
 
     So we cluster the batch first. A batch smaller than MIN_BATCH cannot be grouped, and falls back
     to the plain classifier, which is weaker.
+
+    use_embeddings=False skips the DistilBERT blend (the slim API image has no PyTorch).
     """
     texts = list(texts)
-    if embeddings is None and bundle.embedding_model is not None:
+    if not use_embeddings:
+        embeddings = None
+    elif embeddings is None and bundle.embedding_model is not None:
         embeddings = embed_passages(texts)
     if groups is None and len(texts) >= MIN_BATCH:
         groups = cluster_passages(texts, n_models=len(bundle.classes))

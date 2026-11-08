@@ -3,6 +3,3 @@ pandas==2.2.3
 scipy==1.15.3
 scikit-learn==1.6.1
 joblib==1.4.2
-pytest==8.3.4
-# only needed to compute new DistilBERT embeddings (the saved ones are used otherwise):
-# sentence-transformers>=3

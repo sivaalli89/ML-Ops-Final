@@ -1,0 +1,14 @@
+.git
+.venv
+data
+notebooks
+figures
+research
+tests
+artifacts
+mlruns
+__pycache__
+*.pyc
+.pytest_cache
+*.md
+!README.md
