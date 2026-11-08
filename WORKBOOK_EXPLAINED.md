@@ -1,23 +1,25 @@
 # What the "Name That LLM" workbook does (under the hood)
 
-Files: `notebooks/name_that_llm_groups (1).ipynb` (your original, unchanged) and `notebooks/name_that_llm_simple.ipynb` (short rewrite with the improvements).
+This file explains the method and the experiments in more detail. For how to run things, see the [README](README.md).
+Everything runs in one notebook, `notebooks/name_that_llm.ipynb`. Your original notebook is in git history (first commit).
 
 ## Folder guide
 
 ```
 ML Ops Final/
-├─ WORKBOOK_EXPLAINED.md   this file
-├─ data/        train.csv, test.csv, train_with_groups.csv (made by the notebooks)
-├─ notebooks/   name_that_llm_groups (1).ipynb      your original (unchanged)
-│               name_that_llm_simple.ipynb          short rewrite, includes the skeleton features
-├─ scripts/     two_stage_pipeline.py, plot_models_2d.py, plot_models_2d_nonpca.py
-├─ figures/     flow chart, 2D model charts, notebook plots
-├─ results/     cluster_sweep.csv, two_stage_results.csv
-└─ research/    usenixsecurity25-pasquini.pdf
+├─ README.md, CONTRIBUTING.md   how to run it, how to work on it
+├─ WORKBOOK_EXPLAINED.md        this file
+├─ notebooks/   name_that_llm.ipynb      the whole project, with results saved in it
+├─ data/        train.csv, test.csv and embeddings/ (cached DistilBERT numbers); kept by DVC, not by git
+├─ Dockerfile, docker-compose.yml, docker/   JupyterLab (B) and Airflow (C) in containers, for running the notebook the same way everywhere
+├─ dags/        run_notebook_dag.py: the Airflow trigger that runs the notebook
+├─ models/      model.joblib (kept by DVC) and model_info.json (version, score, data hash)
+├─ runs/        executed copies of the notebook, one per Airflow run (not in git)
+├─ .dvc/        DVC settings; data/*.dvc and models/*.dvc are the pointer files git keeps
+├─ figures/     flow chart and charts used in this file
+├─ research/    usenixsecurity25-pasquini.pdf
+└─ requirements.txt
 ```
-
-Start with `notebooks/name_that_llm_simple.ipynb`. Scripts can be run from any folder.
-Your original notebook still reads `train.csv` from its own folder: to run it from `notebooks/`, change its `TRAIN_PATH` to `"../data/train.csv"`.
 
 ## 0. The whole thing in one picture
 
@@ -38,7 +40,7 @@ flowchart TD
 ```
 
 **Score ladder** (balanced accuracy, grouped CV, chance = 0.056):
-plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features **0.466**.
+plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features 0.466 → logistic regression C=1 0.477 → + 10% DistilBERT blend **0.521**.
 
 **Plain-English summary:** the same 150 questions were put to 18 AIs. The test uses new questions, so we can't learn "topic → AI". Instead we find which passages answer the same question, subtract what they have in common (the topic), and look at what's left: each AI's writing habits. Then we use the rule "each AI answers each question once" to clean up the guesses.
 
@@ -50,9 +52,7 @@ plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features
 |---|---|
 | `data/train.csv` | 2,699 rows: `id, prompt_id, text, model` |
 | `data/test.csv` | only 3 rows here (a tiny sample): `id, text` only (no model, no prompt) |
-| `data/train_with_groups.csv` | train + a recovered `group` column (output of this notebook) |
-| `results/cluster_sweep.csv` | quality table for each number of clusters tried |
-| `figures/group_recovery.png`, `figures/grouped_cv_baseline.png` | the two figures the notebook saves |
+| `figures/group_recovery.png`, `figures/grouped_cv_baseline.png` | figures from the first version of the notebook |
 
 ### The hidden structure
 The data was generated as **~150 prompts × 18 models, one answer each** (150 × 18 ≈ 2,700; one model has 149 rows). So passages come in "families": the 18 answers to the same prompt discuss the same topic and differ only in author style.
@@ -76,7 +76,7 @@ text ──► TF-IDF (content words) ──► LSA 200-d ──► agglomerativ
  (honest score)                             (remove topic, keep style)      (1 model per slot)
 ```
 
-### Step A. Recover the prompt groups (sections 2–4)
+### Step A. Recover the prompt groups (notebook section 2)
 - **Topic vector:** TF-IDF restricted to *content* words (stopwords removed, `max_df=0.05` drops anything common, alphabetic ≥3 letters), then **TruncatedSVD to 200 dims** (LSA) and L2-normalise. Style words are deliberately removed so passages cluster by *subject*, not author.
 - **Clustering:** `AgglomerativeClustering(metric="cosine", linkage="average")`.
 - **Choosing k without labels:** `quality()` uses the known structure: a perfect cluster has ~18 passages and no model twice. Sweep result:
@@ -92,7 +92,7 @@ text ──► TF-IDF (content words) ──► LSA 200-d ──► agglomerativ
   Too few clusters → different prompts merge (repeats). Too many → prompts split (singletons). k = 146–150 balances both.
 - **Grading:** train.csv happens to include the true `prompt_id`, so **ARI = 0.977** against it (1.0 = perfect). The label-free purity metrics agree, which is what makes the method trustworthy for the test set, where no prompt ids exist.
 
-### Step B. Why validation must be grouped (section 5)
+### Step B. Why validation must be grouped
 Baseline model: char 2–5-gram TF-IDF + class-balanced logistic regression, scored by balanced accuracy (chance = 1/18 = 0.056).
 
 | Split | Balanced accuracy |
@@ -107,7 +107,7 @@ Adds function-word rates, punctuation/markdown counts, sentence/word length, and
 
 The "top phrases" table (one logistic regression on word 1–2-grams) shows each model's most distinctive tokens, e.g. Gemini → "profound", "fundamental"; GPT-5.6 variants → "may", "merely". Treat it as tendencies, since many top tokens are function words.
 
-### Step D. The main improvement (final code cell)
+### Step D. The main improvement (centering and assignment)
 Features: char n-gram TF-IDF (20k) + word 1–2-gram TF-IDF (15k), densified, fit on the training fold only.
 
 1. **Prompt-centering.** For every prompt group, subtract that group's mean feature vector from each member. All 18 answers share the topic, so the topic's contribution is the group mean and cancels; what remains is each author's deviation, which is style.
@@ -121,7 +121,7 @@ Features: char n-gram TF-IDF (20k) + word 1–2-gram TF-IDF (15k), densified, fi
 
 So each trick adds roughly +0.07 and +0.04 respectively; ~7.5× chance.
 
-### Step E. Two-stage classifier and "skeleton" features (added later, `scripts/two_stage_pipeline.py`)
+### Step E. Two-stage classifier and "skeleton" features (an experiment, not in the notebook)
 Same 5-fold GroupKFold, so numbers compare directly with Step D.
 
 - **New feature block, "function-word skeleton".** Every word outside the 150 most common becomes `W`; punctuation stays. `The cat sat; it was warm.` → `the W W ; it was W .` Its 1–4-grams describe sentence rhythm and syntax with almost no topic.
@@ -148,13 +148,74 @@ Same 5-fold GroupKFold, so numbers compare directly with Step D.
 
 Takeaway: the models cluster into families, while telling models apart inside a family is the hard part. The 2D charts show only a thin slice (PCA axes cover ~1.5% of style variance), so overlap in 2D doesn't mean the models are inseparable in the full feature space. For honest accuracy, use the cross-validated scores, not how clean a picture looks.
 
+### Step G. Better models and ensembles (experiments, with the winner in the notebook)
+Same 5-fold GroupKFold. Baseline = skeleton features, centring, assignment.
+
+| Idea | Score | Verdict |
+|---|---|---|
+| Logistic regression C=1 instead of 5 | 0.477 | small gain, kept |
+| Linear SVM / averaging LR + SVM | 0.466 | no help |
+| Averaging per-feature-block models | 0.474 | no help (same kind of signal) |
+| MiniLM embeddings alone | 0.205 | weak |
+| DistilBERT embeddings alone | 0.396 | weaker than TF-IDF |
+| TF-IDF + 50/50 embeddings | worse | hurts |
+| **TF-IDF + 10% DistilBERT** | **0.521** | better in 5/5 folds, kept |
+| TF-IDF + 20% / 30% DistilBERT | 0.503 / 0.473 | too much weight hurts |
+
+The DistilBERT weight was picked on the same folds, so 0.521 is a little optimistic (a realistic gain is perhaps +0.02 to +0.04). This blend is section 7 of the notebook. These scores are local cross-validation estimates, not Kaggle scores.
+
+Tuning with Optuna did **not** help once checked honestly. This was done in the earlier pipeline version (see section 5).
+Scored on the folds that picked the settings it reached 0.532, but tuning inside each fold and testing on untouched prompts
+gives 0.520 for both the hand-picked and the tuned settings: in four of five folds the search simply kept the hand-picked
+values. That check used 6 trials and 3 inner folds, a lighter search than the 12-trial run. The notebook keeps the
+hand-picked settings.
+
 ## 3. Things to know
 - **Test-time requirement.** Centering and assignment both need the test passages grouped by prompt. You must cluster `data/test.csv` with the same recipe (it's small, so check the cluster sizes carefully: assignment assumes ≤18 per group, and 18 distinct models per group).
 - **`prompt_id` is only used for grading** the clustering (ARI). The pipeline itself never reads it.
-- **Optional e5 embeddings.** `E5_PATH` swaps TF-IDF+LSA for a sentence-transformer; not run here. It may help with the ~5% of clusters that still merge.
 - **The research PDF (`research/usenixsecurity25-pasquini.pdf`) is *LLMmap* (USENIX Security 2025).** It fingerprints 42 LLM versions at >95% accuracy, but with chosen probe questions and ~8 responses per model, so it is an easier setup than one free-form passage. Ideas that transfer: e5 embeddings (`multilingual-e5-large-instruct`) feeding a small transformer, contrastive training, and pooling several samples (your assignment step does a version of this). It does **not** contain the markdown, function-word or first-word features, and its Fig. 6 is a 2D map of learned signatures, not a phrase list. So the notebook's comments "style features from the paper" and "paper Fig. 6" must refer to some other paper, which I haven't identified.
-- **Not done yet:** e5 embeddings (needs torch and a ~2 GB model download), contrastive training, and merging the skeleton features into the notebook itself. They exist only in `scripts/two_stage_pipeline.py`.
-- **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model), MLflow logging of `cv_scheme`, `k`, `cluster_quality`.
+- **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook; the two-stage classifier was dropped.)
+- **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model).
 
 ## 4. How to re-run
-Needs `pandas, numpy, scikit-learn, scipy, matplotlib`. Put `data/train.csv` next to the notebook and run top to bottom (the GroupKFold cells use `n_jobs=-1` and the last cell builds dense ~35k-column matrices, so give it a few GB of RAM).
+See the [README](README.md): run it with Python on your computer, in a Docker container or under Airflow. The notebook reads `../data/train.csv` and builds dense
+~55k-column matrices, so give it a few GB of RAM. A full run takes about 8 minutes on your own Python and 12 to 15 in a container (the README explains why).
+
+## 5. The earlier pipeline version (archived)
+
+Before the project was reduced to the notebook, it also had:
+
+| Part | What it did |
+|---|---|
+| A `.py` package (`src/name_that_llm/`) | the notebook's steps as reusable code, run from the command line |
+| Optuna tuning | searched three settings, scored on held-out prompts |
+| An MLflow model registry | kept every trained model as a numbered version with a semantic version tag, and promoted a new one to "champion" only if its score was not worse |
+| A FastAPI service | `/predict` took a batch of passages and returned a guessed model for each |
+| An Airflow pipeline | group, tune, train, evaluate and register as six tasks in order |
+| Tests and Docker files | 38 tests on made-up data; images for the API, MLflow and Airflow |
+
+All of it is saved under the git tag `archive/pipeline-version`. To look at it: `git checkout archive/pipeline-version`
+(`git checkout -` to come back). The tag exists only on this computer until you run
+`git push origin archive/pipeline-version`.
+
+What was and was not verified: the Python code and the tests were run on the real data, and the registry was exercised
+against a local MLflow store. The Docker images, the MLflow server and the Airflow pipeline were written but never built or run.
+The one lasting finding is the honest tuning result in Step G: Optuna did not improve on the hand-picked settings.
+
+## 6. Triggering the notebook, and versioning data and models
+
+**Trigger.** A notebook does nothing until someone runs it. Airflow (README, Option C) is the trigger: it runs the notebook on a
+button press or a schedule, logs each run, and saves an executed copy of the notebook for that run in `runs/`. The DAG is a
+single short file, `dags/run_notebook_dag.py`, with three tasks: check the data is there, run the notebook, print the model info.
+
+**Data versioning.** `train.csv` is tracked by DVC, which stores the file by its content hash and gives git a small pointer.
+Changing the data produces a new hash and, after `dvc add` and a commit, a new version (`data-v2`). Going back is a git
+checkout plus `dvc checkout`.
+
+**Model versioning.** Notebook section 8 trains on all passages and saves `models/model.joblib` and `models/model_info.json`.
+The info file holds the version number, the cross-validated score, the settings and the hash of the training data, so a
+model always says which data produced it. Versioning the file works the same way as for data (`dvc add`, commit, tag
+`model-v0.1.0`).
+
+**What this does not do.** It records and restores versions. It does not decide automatically which model is in service or
+refuse a worse one; the archived pipeline version had an MLflow registry that did (section 5).

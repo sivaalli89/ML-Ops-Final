@@ -1,0 +1,59 @@
+# Start JupyterLab with the notebook:   docker compose up --build
+# Then open http://localhost:8888/lab?token=namethatllm and open notebooks/name_that_llm.ipynb
+#
+# Run the notebook without opening Jupyter (the saved copy goes to your project folder, not over the original):
+#   docker compose run --rm notebook jupyter nbconvert --to notebook --execute name_that_llm.ipynb --output-dir ../data --output ran
+#
+# Run the notebook with Airflow (on demand or on a schedule):   docker compose --profile airflow up --build airflow
+#   Airflow page: http://localhost:8080  (login admin / admin, change it with AIRFLOW_ADMIN_PASSWORD)
+#   Switch on the DAG "run_notebook" and press play. Executed copies go to ./runs, the model to ./models.
+#
+# Settings can go in a .env file (see .env.example).
+services:
+  notebook:
+    build:
+      context: .
+      args:
+        INSTALL_EMBEDDINGS: ${INSTALL_EMBEDDINGS:-false}
+    ports:
+      - "127.0.0.1:8888:8888"          # only reachable from this computer
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-namethatllm}
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./data:/app/data
+      - ./models:/app/models
+
+  # One container: the scheduler and the web page together, with a small SQLite database kept in a volume.
+  # Fine for running one notebook; a bigger setup would use Postgres and separate containers.
+  airflow:
+    profiles: ["airflow"]
+    build:
+      context: .
+      dockerfile: docker/airflow.Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-change-me}
+    volumes:
+      - airflow-home:/opt/airflow
+      - ./dags:/opt/airflow/dags
+      - ./notebooks:/opt/airflow/notebooks
+      - ./data:/opt/airflow/data
+      - ./models:/opt/airflow/models
+      - ./runs:/opt/airflow/runs
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username admin --password ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      --firstname Admin --lastname User --role Admin --email admin@example.com || true;
+      airflow scheduler & exec airflow webserver"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  airflow-home:

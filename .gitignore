@@ -1,0 +1,26 @@
+# data and models are versioned with DVC: git keeps only the small .dvc pointer files.
+# DVC adds the tracked files to data/.gitignore and models/.gitignore itself; this is for stray leftovers.
+data/train_with_groups.csv
+data/ran.ipynb
+
+# executed copies of the notebook that Airflow saves for each run
+runs/*
+!runs/.gitkeep
+
+# python / notebooks
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+
+# old pipeline outputs, if you still have them
+artifacts/
+mlruns/
+mlflow.db
+
+# local settings
+.env
+
+# OS / editor
+.DS_Store
+.vscode/

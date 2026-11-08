@@ -1,0 +1,3 @@
+# keep the build context tiny: the image only needs requirements.txt
+*
+!requirements.txt
