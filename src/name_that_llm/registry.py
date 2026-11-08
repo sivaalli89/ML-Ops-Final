@@ -21,8 +21,7 @@ import mlflow
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
-from . import __version__
-from .paths import ROOT
+from . import ROOT, __version__
 
 MODEL_NAME = "name_that_llm"
 EXPERIMENT = "name_that_llm"

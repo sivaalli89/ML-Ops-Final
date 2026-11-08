@@ -21,10 +21,10 @@ from sklearn.metrics import balanced_accuracy_score
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import StandardScaler
 
+from . import ROOT
 from .features import StyleFeatures
-from .group_ops import assign_one_model_each, center_by_group
+from .grouping import assign_one_model_each, center_by_group
 from .model import blend
-from .paths import ROOT
 from .train import DEFAULT_PARAMS, fit_bundle, load_training_data, score_bundle
 
 

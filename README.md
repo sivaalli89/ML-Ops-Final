@@ -98,6 +98,10 @@ Models are versioned in the **MLflow Model Registry** (http://localhost:5000 in 
   kept, tagged `not promoted`, and the old champion stays. A replaced champion is tagged `retired`.
 - Each version links to its run, which holds the settings, the scores, `metrics.json` and `best_params.json`.
   Optuna's search is logged as its own run (one point per trial) when `MLFLOW_TRACKING_URI` is set.
+- **A retrain, step by step:** train a candidate -> score it on unseen prompts -> register it as the next version
+  with its semantic version and score -> compare with the champion -> move the `champion` alias only if it is not
+  worse. The longer explanation, with an example and the rollback steps, is in
+  [WORKBOOK_EXPLAINED.md](WORKBOOK_EXPLAINED.md#5-model-versioning-how-it-works).
 - The API loads `models:/name_that_llm@champion` at startup. Set `MODEL_VERSION=2` to pin a version, which also
   works as a rollback. `GET /health` shows which version is loaded.
 
@@ -126,7 +130,14 @@ first. A batch under 54 passages can't be grouped; it is answered by the plain c
 ## Project layout
 
 ```
-src/name_that_llm/   grouping, group_ops, features, model, train, tune (Optuna), registry (versioning), predict
+src/name_that_llm/   the package, one file per job:
+    grouping.py          find prompt groups; centering and one-model-each assignment
+    features.py          style features (TF-IDF) and DistilBERT embeddings
+    model.py             the trained model object and how its two parts are blended
+    train.py             train, cross-validate, save (python -m name_that_llm.train)
+    tune.py              Optuna search (python -m name_that_llm.tune)
+    registry.py          model versioning with MLflow (python -m name_that_llm.registry)
+    predict.py           predict for a batch of passages
 dags/                Airflow DAG: the training pipeline
 docker/              Airflow image
 api/                 FastAPI service

@@ -4,8 +4,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .features import embed_passages
-from .group_ops import assign_one_model_each
-from .grouping import MIN_BATCH, cluster_passages
+from .grouping import MIN_BATCH, assign_one_model_each, cluster_passages
 from .model import ModelBundle
 
 

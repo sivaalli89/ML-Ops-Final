@@ -1,19 +1,25 @@
 # What the "Name That LLM" workbook does (under the hood)
 
-The one notebook is `notebooks/name_that_llm.ipynb`. (Your original version is still in git history, first commit.)
+This file explains the method and the model versioning. For how to install and run things, see the [README](README.md).
+The notebook `notebooks/name_that_llm.ipynb` walks through the method; your original version is in git history (first commit).
 
 ## Folder guide
 
 ```
 ML Ops Final/
-├─ WORKBOOK_EXPLAINED.md   this file
-├─ data/        train.csv, test.csv, train_with_groups.csv (made by the notebook), embeddings/ (saved DistilBERT numbers)
-├─ notebooks/   name_that_llm.ipynb      the one notebook (full pipeline + ensemble)
+├─ README.md, CONTRIBUTING.md   how to run it, how to contribute
+├─ WORKBOOK_EXPLAINED.md        this file
+├─ notebooks/   name_that_llm.ipynb      self-contained walk-through of the method
+├─ src/name_that_llm/                    the real code (grouping, features, model, train, tune, registry, predict)
+├─ api/         FastAPI service that serves the model
+├─ dags/        Airflow pipeline: group -> tune -> train -> evaluate -> register
+├─ docker/, Dockerfile, docker-compose.yml   images for the API, MLflow, Airflow
+├─ tests/       unit and end-to-end tests on made-up data
+├─ data/        train.csv, test.csv (not in git), train_with_groups.csv, embeddings/ (saved DistilBERT numbers)
+├─ artifacts/   latest trained model, best_params.json, metrics.json (not in git)
 ├─ figures/     flow chart, 2D model charts, notebook plots
 └─ research/    usenixsecurity25-pasquini.pdf
 ```
-
-Open `notebooks/name_that_llm.ipynb` and run it top to bottom.
 
 ## 0. The whole thing in one picture
 
@@ -159,12 +165,81 @@ Same 5-fold GroupKFold. Baseline = skeleton features, centring, assignment.
 
 The DistilBERT weight was picked on the same folds, so 0.521 is a little optimistic (a realistic gain is perhaps +0.02 to +0.04). This blend is section 7 of the notebook. These scores are local cross-validation estimates, not Kaggle scores.
 
+Tuning with Optuna did **not** help once checked honestly. Scored on the folds that picked the settings it reached 0.532,
+but tuning inside each fold and testing on untouched prompts (`python -m name_that_llm.tune --nested`) gives 0.520 for
+both the hand-picked and the tuned settings: in four of five folds the search simply kept the hand-picked values.
+That check used 6 trials and 3 inner folds, a lighter search than the 12-trial run.
+
 ## 3. Things to know
 - **Test-time requirement.** Centering and assignment both need the test passages grouped by prompt. You must cluster `data/test.csv` with the same recipe (it's small, so check the cluster sizes carefully: assignment assumes ≤18 per group, and 18 distinct models per group).
 - **`prompt_id` is only used for grading** the clustering (ARI). The pipeline itself never reads it.
 - **The research PDF (`research/usenixsecurity25-pasquini.pdf`) is *LLMmap* (USENIX Security 2025).** It fingerprints 42 LLM versions at >95% accuracy, but with chosen probe questions and ~8 responses per model, so it is an easier setup than one free-form passage. Ideas that transfer: e5 embeddings (`multilingual-e5-large-instruct`) feeding a small transformer, contrastive training, and pooling several samples (your assignment step does a version of this). It does **not** contain the markdown, function-word or first-word features, and its Fig. 6 is a 2D map of learned signatures, not a phrase list. So the notebook's comments "style features from the paper" and "paper Fig. 6" must refer to some other paper, which I haven't identified.
-- **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook; the two-stage classifier was dropped.)
+- **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook and the package; the two-stage classifier was dropped.)
+- **Notebook versus package.** The notebook has its own copy of the code and does not use the package, so running it
+  does not change the model the API serves.
 - **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model), MLflow logging of `cv_scheme`, `k`, `cluster_quality`.
 
 ## 4. How to re-run
-Needs `pandas, numpy, scikit-learn, scipy, matplotlib`. Put `data/train.csv` next to the notebook and run top to bottom (the GroupKFold cells use `n_jobs=-1` and the last cell builds dense ~35k-column matrices, so give it a few GB of RAM).
+See the [README](README.md): section A for plain Python, section B for Docker. The notebook reads `../data/train.csv`
+and builds dense ~35k-column matrices, so give it a few GB of RAM.
+
+## 5. Model versioning: how it works
+
+**The problem it solves.** Every retrain produces a new model file. Without versioning you cannot say which model is
+serving, how good it was, what settings made it, or go back to the one that worked yesterday. Retraining could also
+silently replace a good model with a worse one. The registry fixes this by keeping every model as a numbered version and
+promoting a new one only if it earns it.
+
+**The tool.** MLflow's *Model Registry* (a page at http://localhost:5000 in Docker). It stores three things:
+
+| Piece | What it is |
+|---|---|
+| **Run** | One training event: the settings (`style_c` ...), the scores, the model file, `metrics.json`, `best_params.json` |
+| **Model version** | A numbered copy of the model (1, 2, 3 ...) linked to the run that made it, with tags |
+| **Alias `champion`** | A movable label on one version: "this is the one in service" |
+
+**Two version numbers, on purpose.**
+- The **registry number** (1, 2, 3 ...) is automatic and only goes up. It is the exact identity of a model.
+- The **semantic version** (`0.1.2`) tells people how big a change was. `0.1` comes from `__version__` in
+  `src/name_that_llm/__init__.py`: raise it by hand when the features or the model code change (a different kind of model).
+  The last digit goes up by one automatically on every retrain under the same `0.1`, which is the "same recipe, new
+  training run" case.
+
+**What happens on a retrain** (the Airflow task `register_model`, or `python -m name_that_llm.registry`):
+
+```
+train + cross-validate  ->  candidate model, score 0.531
+           |
+           v
+register as the next version   -> registry #3, semver 0.1.2, tags: score, status
+           |
+           v
+compare with the champion's stored score
+     |                                   |
+  at least as good                    worse
+     |                                   |
+alias "champion" moves to #3         #3 is kept but tagged "not promoted"
+old champion tagged "retired"        the champion does not change
+```
+
+**An example history** (illustrative numbers):
+
+| Registry # | Semver | Score | Status |
+|---|---|---|---|
+| 1 | 0.1.0 | 0.520 | retired |
+| 2 | 0.1.1 | 0.505 | not promoted (worse than #1) |
+| 3 | 0.1.2 | 0.531 | **champion** |
+
+**How the API uses it.** On startup it loads `models:/name_that_llm@champion`, and `GET /health` reports the version it
+loaded. If MLflow is unreachable or has no champion yet, it falls back to `artifacts/model.joblib`. After a new champion is
+promoted, restart the API to pick it up.
+
+**Rolling back.** Set `MODEL_VERSION=1` for the API and restart it, which serves version 1 whatever the alias says.
+To make the rollback permanent, point the `champion` alias back at that version in the MLflow page.
+
+**Things to know about the promotion rule.**
+- Scores compare fairly only while the data and the prompt groups are the same. If the training data changes, the old
+  champion's stored score is out of date.
+- Fold-to-fold scores wobble by about 0.02, so a difference of 0.003 is noise. With the default `--min-gain 0`, a tie
+  promotes the newer model. Use `--min-gain 0.01` to demand a real improvement before anything changes.
+- The registry stores the model file as an artifact and does not run it. It is the record of what exists and what is in service.

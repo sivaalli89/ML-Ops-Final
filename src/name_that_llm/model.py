@@ -10,7 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from .features import StyleFeatures
-from .group_ops import center_by_group
+from .grouping import center_by_group
 
 EMBEDDING_WEIGHT = 0.1   # DistilBERT is weaker than TF-IDF alone; at 0.3 and above it starts to hurt
 

@@ -17,10 +17,10 @@ from sklearn.metrics import balanced_accuracy_score
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import StandardScaler
 
+from . import ROOT
 from .features import StyleFeatures
-from .group_ops import assign_one_model_each, center_by_group
+from .grouping import assign_one_model_each, center_by_group
 from .model import EMBEDDING_WEIGHT, ModelBundle, blend
-from .paths import ROOT
 
 # the settings that worked best by hand; tune.py searches around these
 DEFAULT_PARAMS = {"style_c": 1.0, "embedding_c": 0.1, "embedding_weight": EMBEDDING_WEIGHT}

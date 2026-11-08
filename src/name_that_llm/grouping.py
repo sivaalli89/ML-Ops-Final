@@ -1,5 +1,6 @@
-"""Find which passages answer the same prompt (cluster by topic)."""
+"""Find which passages answer the same prompt, and use those groups (centering, one-model-each assignment)."""
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import TruncatedSVD
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -50,12 +51,35 @@ def cluster_quality(groups, models=None, prompt_ids=None):
     return quality
 
 
+def center_by_group(features, groups):
+    """Subtract each group's average row. All passages in a group share the topic, so it cancels out."""
+    centered = features.copy()
+    for g in np.unique(groups):
+        rows = (groups == g)
+        centered[rows] = features[rows] - features[rows].mean(axis=0)
+    return centered
+
+
+def assign_one_model_each(probs, groups):
+    """Inside a group each model should appear once, so find the best one-to-one matching."""
+    n_models = probs.shape[1]
+    best_guess = probs.argmax(axis=1)
+    for g in np.unique(groups):
+        rows = np.where(groups == g)[0]
+        cost = -np.log(probs[rows] + 1e-9)          # low cost = likely
+        if len(rows) > n_models:                     # a merged cluster: let models repeat
+            cost = np.tile(cost, int(np.ceil(len(rows) / n_models)))
+        row_ids, model_ids = linear_sum_assignment(cost)
+        best_guess[rows[row_ids]] = model_ids % n_models
+    return best_guess
+
+
 def main():
     """python -m name_that_llm.grouping : make data/train_with_groups.csv from data/train.csv"""
     import argparse
     import pandas as pd
 
-    from .paths import ROOT
+    from . import ROOT
 
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument("--data", default=ROOT / "data" / "train.csv")
