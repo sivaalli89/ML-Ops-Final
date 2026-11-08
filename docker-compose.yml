@@ -1,5 +1,33 @@
-# docker compose up --build        (needs artifacts/model.joblib: run `python -m name_that_llm.train --fit` first)
-# More services (Airflow, MLflow, Prometheus, Grafana) are added here in later steps.
+# Serve the model:      docker compose up --build api
+# Run the pipeline too: docker compose --profile pipeline up --build
+#   Airflow page: http://localhost:8080  (login admin / the password in .env, default "admin")
+#   Then switch on and trigger the DAG "name_that_llm_training". Needs train.csv in ./data
+#   and about 8 GB of memory given to Docker.
+# Settings can go in a .env file (see .env.example).
+
+x-airflow: &airflow
+  build:
+    context: .
+    dockerfile: docker/airflow.Dockerfile
+  image: name-that-llm-airflow:latest
+  profiles: ["pipeline"]
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-change-me}
+    NAME_THAT_LLM_HOME: /opt/airflow
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./data:/opt/airflow/data
+    - ./artifacts:/opt/airflow/artifacts
+    - ./logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   api:
     build: .
@@ -15,3 +43,48 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["pipeline"]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 10
+
+  airflow-init:
+    <<: *airflow
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username admin --password ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      --firstname Admin --lastname User --role Admin --email admin@example.com || true"
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:

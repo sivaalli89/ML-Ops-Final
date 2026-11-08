@@ -32,7 +32,8 @@ competition page; a shared DVC remote will replace this step). Then:
 
 ```bash
 python -m name_that_llm.grouping          # finds the prompt groups -> data/train_with_groups.csv
-python -m name_that_llm.train --cv        # honest score, about 1 minute
+python -m name_that_llm.tune --trials 15  # Optuna searches the settings -> artifacts/best_params.json
+python -m name_that_llm.train --cv        # honest score, about 1 minute (add --params artifacts/best_params.json)
 python -m name_that_llm.train --fit       # trains on everything, saves artifacts/model.joblib
 uvicorn api.main:app --port 8000          # serves the model
 ```
@@ -41,15 +42,25 @@ The DistilBERT numbers are read from `data/embeddings/distilbert.npy` if it exis
 `pip install sentence-transformers` (needs PyTorch); the notebook's section 7 shows how. Without the file, the
 model trains and serves with the style features only.
 
-### B. Run the API in Docker
+### B. Run it in Docker
 
-```bash
-python -m name_that_llm.train --fit       # creates artifacts/model.joblib first
-docker compose up --build
-curl localhost:8000/health
-```
+Two parts, both started from `docker-compose.yml`:
 
-The image is the slim one (TF-IDF style model, no PyTorch). The model file is mounted in, not baked in.
+| Part | Command | What it does |
+|---|---|---|
+| **API** | `docker compose up --build` | Serves the model from `artifacts/model.joblib` on http://localhost:8000 |
+| **Training pipeline** | `docker compose --profile pipeline up --build` | Airflow on http://localhost:8080 (login `admin` / `admin`, change it in `.env`) |
+
+The Airflow DAG `name_that_llm_training` runs, in order: check the data, find prompt groups, **tune with Optuna**,
+train, evaluate. Switch it on and click *Trigger DAG w/ config* to choose the number of Optuna trials. It reads
+`train.csv` and the embeddings from `./data` and writes the model, `best_params.json` and `metrics.json` to
+`./artifacts`, which is the same folder the API reads. Restart the API (or just `docker compose restart api`) to
+load a newly trained model.
+
+Give Docker about 8 GB of memory: tuning builds large feature tables. The images are slim and have no PyTorch; the
+DistilBERT numbers come from the saved `data/embeddings/distilbert.npy`.
+
+Without Docker you can do the same by hand with the commands in section A.
 
 ## Using the API
 
@@ -67,7 +78,9 @@ first. A batch under 54 passages can't be grouped; it is answered by the plain c
 ## Project layout
 
 ```
-src/name_that_llm/   grouping, group_ops, features, model, train, predict
+src/name_that_llm/   grouping, group_ops, features, model, train, tune (Optuna), predict
+dags/                Airflow DAG: the training pipeline
+docker/              Airflow image
 api/                 FastAPI service
 tests/               unit + end-to-end tests on toy data
 notebooks/           the one explanatory notebook
