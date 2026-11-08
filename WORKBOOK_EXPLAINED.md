@@ -11,6 +11,7 @@ ML Ops Final/
 ├─ WORKBOOK_EXPLAINED.md        this file
 ├─ notebooks/   name_that_llm.ipynb      the whole project, with results saved in it
 ├─ data/        train.csv (not in git), embeddings/ (cached DistilBERT numbers)
+├─ Dockerfile, docker-compose.yml   JupyterLab in a container, for running the notebook the same way everywhere
 ├─ figures/     flow chart and charts used in this file
 ├─ research/    usenixsecurity25-pasquini.pdf
 └─ requirements.txt
@@ -173,7 +174,7 @@ hand-picked settings.
 - **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model).
 
 ## 4. How to re-run
-See the [README](README.md). The notebook reads `../data/train.csv` and builds dense ~35k-column matrices, so give it a few GB of
+See the [README](README.md): run it with Python on your computer or in a Docker container. The notebook reads `../data/train.csv` and builds dense ~35k-column matrices, so give it a few GB of
 RAM. A full run takes about 6 to 8 minutes.
 
 ## 5. The earlier pipeline version (archived)

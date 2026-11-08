@@ -1,0 +1,20 @@
+# Start JupyterLab with the notebook:   docker compose up --build
+# Then open http://localhost:8888/lab?token=namethatllm and open notebooks/name_that_llm.ipynb
+#
+# Run the notebook without opening Jupyter (the saved copy goes to your project folder, not over the original):
+#   docker compose run --rm notebook jupyter nbconvert --to notebook --execute name_that_llm.ipynb --output-dir ../data --output ran
+#
+# Settings can go in a .env file (see .env.example).
+services:
+  notebook:
+    build:
+      context: .
+      args:
+        INSTALL_EMBEDDINGS: ${INSTALL_EMBEDDINGS:-false}
+    ports:
+      - "127.0.0.1:8888:8888"          # only reachable from this computer
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-namethatllm}
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./data:/app/data

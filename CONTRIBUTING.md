@@ -11,7 +11,7 @@
 
 ## Setup
 
-See the README: create a virtual environment, `pip install -r requirements.txt`, put `train.csv` in `data/`.
+See the README: either create a virtual environment and `pip install -r requirements.txt`, or run `docker compose up --build` for JupyterLab in a container. Either way, put `train.csv` in `data/` first.
 
 ## Rules of thumb
 

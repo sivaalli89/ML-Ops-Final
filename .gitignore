@@ -13,6 +13,9 @@ artifacts/
 mlruns/
 mlflow.db
 
+# local settings
+.env
+
 # OS / editor
 .DS_Store
 .vscode/
