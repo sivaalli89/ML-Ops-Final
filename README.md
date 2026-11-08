@@ -21,13 +21,16 @@ Balanced accuracy on prompts the model has never seen (5 folds split by prompt; 
 
 | Step | Score |
 |---|---|
-| Random split instead of by prompt (misleading) | 0.114 |
-| Split by prompt, plain model | 0.313 |
+| Random split instead of by prompt (misleading), simple character-only model | 0.114 |
+| Split by prompt, same simple model | 0.313 |
 | + centering by prompt group | 0.381 |
 | + one-model-each assignment | 0.422 |
 | + skeleton features | 0.466 |
 | Logistic regression tuned a little (C=1) | 0.477 |
 | + 10% DistilBERT blend | **0.521** |
+
+The first two rows use a simpler model, only to show why the split matters; the rest use the full features. The notebook does
+not print the full model's score without centering (an earlier experiment gave 0.309).
 
 These are local estimates on the training data, not scores from the Kaggle competition. The last row came out as 0.520 on
 one machine and 0.521 on another: tiny numerical differences, so read it as "about 0.52".
@@ -36,8 +39,8 @@ one machine and 0.521 on another: tiny numerical differences, so read it as "abo
 
 The competition data is not in git. Put `train.csv` in `data/` first: either download it from the Kaggle competition page, or
 run `dvc pull` once DVC storage is set up (see *Data and model versioning*). A full run needs a few GB of memory, because the
-feature tables are large, and takes a while: about 8 minutes on your own Python, about 12 minutes in the Jupyter container and
-about 15 minutes under Airflow (measured here). See *Why a run takes a while* below.
+feature tables are large, and takes a while: about 6 to 7 minutes on your own Python, about 12 minutes in the Jupyter container
+(measured before section 8 was added) and about 15 minutes under Airflow (measured here). See *Why a run takes a while* below.
 
 ### Option A: Python on your computer
 
@@ -77,7 +80,8 @@ when you click a button or every week, keeps a log of every run, and saves a cop
 docker compose --profile airflow up --build airflow
 ```
 
-Open http://localhost:8080 and log in with `admin` / `admin` (set `AIRFLOW_ADMIN_PASSWORD` in `.env` to change it). The DAG
+Open http://localhost:8080 and log in with `admin` / `admin` (set `AIRFLOW_ADMIN_PASSWORD` in `.env` to change it; these defaults are for
+your own computer, where the page is only reachable locally). The DAG
 `run_notebook` is already switched on:
 
 - **Run it now:** press the play button next to `run_notebook`, or `docker compose exec airflow airflow dags trigger run_notebook`.
@@ -160,7 +164,8 @@ character, word and skeleton features) for 2,700 passages:
 | Section 7, the DistilBERT blend | 10 (5 TF-IDF + 5 DistilBERT) |
 | Section 8, the final model | 2 |
 
-Most of that is single-threaded, so a 16-core machine mostly sits idle, and building the feature tables adds time on top.
+Sections 6 to 8 train one model after another, and each fit uses only a few cores (we saw 1.5 to 4.5 of 16 busy in the Airflow
+container), so most of the machine sits idle. Building the feature tables adds time on top.
 Containers are slower than your own Python: they share the machine with Docker, and under Airflow the scheduler and web page
 run alongside. The notebook is written as a plain loop so it is easy to read. If speed matters more than readability, the
 folds could run in parallel, which would cut the time to a few minutes; the archived pipeline version did that.
@@ -169,13 +174,16 @@ folds could run in parallel, which would cut the time to a few minutes; the arch
 
 | Part | Tested how |
 |---|---|
-| The notebook | run top to bottom with no errors on your own Python, in the Jupyter container and under Airflow |
+| The notebook | run top to bottom with no errors on your own Python (Windows, Python 3.13, 6.4 minutes), in the Jupyter container and under Airflow; the final version, including the model-saving section, was run natively and under Airflow, with the same scores |
 | Airflow | the `run_notebook` DAG was triggered by hand and finished with state `success` (about 15 minutes); the executed copy, the model and its info were written |
 | Data versioning | files pushed to DVC storage, deleted together with the local cache, and restored by `dvc pull` with identical hashes |
 | Model versioning | a model saved as `model-v0.1.0`, restored in a fresh clone with `dvc pull`, and rolled back and forward between two versions |
 | The saved model | loads in plain Python with only scikit-learn installed |
+| The Jupyter container | starts, needs the token, and can write to `data/` and `models/` (which section 8 needs) |
 
-Not tested: a **scheduled** run (only a manual trigger was run), DVC storage shared between several people (the storage here is a
+Not tested: building the image with `INSTALL_EMBEDDINGS=true` (the PyTorch route), running on macOS or Linux (everything here ran
+on Windows with Docker Desktop; on Linux the file ownership of the mounted folders may need `UID` set), a **scheduled** run (only a
+manual trigger was run), DVC storage shared between several people (the storage here is a
 folder on one computer), and Airflow with a bigger setup than one container. The second model version in the rollback test was made
 by editing the saved model's blend weight, so it tested the versioning mechanics, not a real retrain.
 
@@ -201,7 +209,8 @@ CONTRIBUTING.md                 how to work on it as a team
 An earlier version also had a `.py` package, a FastAPI service, a larger Airflow pipeline (group, tune, train, evaluate,
 register), an MLflow model registry that promoted a model only if it scored at least as well as the current one, Optuna tuning,
 tests and Docker files for them. The Airflow DAG now in the project is much smaller: it only runs the notebook. It was removed to keep this project to the notebook, but nothing is lost:
-it is saved under the git tag `archive/pipeline-version`.
+it is saved under the git tag `archive/pipeline-version`. If the tag isn't on your copy, the same version is the commit
+`dfdf20d`, which is in this repository's history (`git checkout dfdf20d`).
 
 ```bash
 git checkout archive/pipeline-version        # look at it (git checkout - to come back)

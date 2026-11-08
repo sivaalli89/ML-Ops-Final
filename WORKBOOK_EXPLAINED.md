@@ -179,7 +179,7 @@ hand-picked settings.
 
 ## 4. How to re-run
 See the [README](README.md): run it with Python on your computer, in a Docker container or under Airflow. The notebook reads `../data/train.csv` and builds dense
-~55k-column matrices, so give it a few GB of RAM. A full run takes about 8 minutes on your own Python and 12 to 15 in a container (the README explains why).
+~55k-column matrices, so give it a few GB of RAM. A full run takes about 6 to 7 minutes on your own Python and 12 to 15 in a container (the README explains why).
 
 ## 5. The earlier pipeline version (archived)
 
@@ -195,8 +195,8 @@ Before the project was reduced to the notebook, it also had:
 | Tests and Docker files | 38 tests on made-up data; images for the API, MLflow and Airflow |
 
 All of it is saved under the git tag `archive/pipeline-version`. To look at it: `git checkout archive/pipeline-version`
-(`git checkout -` to come back). The tag exists only on this computer until you run
-`git push origin archive/pipeline-version`.
+(`git checkout -` to come back). The tag exists only on the computer that made it until someone runs
+`git push origin archive/pipeline-version`; without it, the same version is the commit `dfdf20d`, which is in this repository's history.
 
 What was and was not verified: the Python code and the tests were run on the real data, and the registry was exercised
 against a local MLflow store. The Docker images, the MLflow server and the Airflow pipeline were written but never built or run.
