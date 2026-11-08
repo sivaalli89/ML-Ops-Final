@@ -53,14 +53,13 @@ def cluster_quality(groups, models=None, prompt_ids=None):
 def main():
     """python -m name_that_llm.grouping : make data/train_with_groups.csv from data/train.csv"""
     import argparse
-    from pathlib import Path
-
     import pandas as pd
 
-    root = Path(__file__).resolve().parents[2]
+    from .paths import ROOT
+
     parser = argparse.ArgumentParser(description=main.__doc__)
-    parser.add_argument("--data", default=root / "data" / "train.csv")
-    parser.add_argument("--out", default=root / "data" / "train_with_groups.csv")
+    parser.add_argument("--data", default=ROOT / "data" / "train.csv")
+    parser.add_argument("--out", default=ROOT / "data" / "train_with_groups.csv")
     args = parser.parse_args()
 
     df = pd.read_csv(args.data).dropna(subset=["text", "model"]).reset_index(drop=True)
