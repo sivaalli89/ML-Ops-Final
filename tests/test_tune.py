@@ -48,3 +48,20 @@ def test_nested_check_scores_default_and_tuned_on_untouched_prompts(toy_data):
     assert list(scores.columns) == ["default", "tuned"]
     assert len(scores) == 2
     assert scores.notna().all().all()
+
+
+def test_search_can_be_logged_to_mlflow(toy_data, tmp_path, monkeypatch):
+    mlflow = pytest.importorskip("mlflow")
+    from name_that_llm.tune import mlflow_callback
+
+    monkeypatch.chdir(tmp_path)
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path / 'mlflow.db'}")
+    callback = mlflow_callback()
+    try:
+        tune(toy_data["text"], toy_data["model"], toy_data["prompt_id"].to_numpy(), None,
+             n_trials=2, n_splits=3, n_jobs=1, verbose=False, callbacks=[callback])
+        run_id = mlflow.active_run().info.run_id
+    finally:
+        mlflow.end_run()
+    history = mlflow.MlflowClient().get_metric_history(run_id, "cv_score")
+    assert [m.step for m in history] == [0, 1]

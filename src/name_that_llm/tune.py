@@ -9,6 +9,7 @@ The expensive part (building the text features) is done once per fold; every tri
 """
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,7 +79,7 @@ def score_fold(fold, style_c, embedding_c=None, embedding_weight=0.0):
     return balanced_accuracy_score(fold.y_test, guess)
 
 
-def tune(texts, labels, groups, embeddings=None, n_trials=15, n_splits=5, seed=0, n_jobs=5, verbose=True):
+def tune(texts, labels, groups, embeddings=None, n_trials=15, n_splits=5, seed=0, n_jobs=5, verbose=True, callbacks=None):
     """Search the settings. Returns the best settings and their cross-validated score."""
     import optuna
     optuna.logging.set_verbosity(optuna.logging.INFO if verbose else optuna.logging.WARNING)
@@ -98,13 +99,27 @@ def tune(texts, labels, groups, embeddings=None, n_trials=15, n_splits=5, seed=0
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=seed))
     # trial 0 = the hand-picked settings, so we can see whether tuning really beats them
     study.enqueue_trial({key: value for key, value in DEFAULT_PARAMS.items() if with_embeddings or key == "style_c"})
-    study.optimize(objective, n_trials=n_trials)
+    study.optimize(objective, n_trials=n_trials, callbacks=callbacks)
     return {
         "best_params": study.best_params,
         "cv_score_tuned": study.best_value,
         "cv_score_default": study.trials[0].value,
         "n_trials": n_trials,
     }
+
+
+def mlflow_callback():
+    """Log every trial to MLflow so the search can be browsed there. Call mlflow.end_run() when the search is over."""
+    import mlflow
+    mlflow.set_experiment("name_that_llm")
+    mlflow.start_run(run_name="optuna-tuning")
+
+    def log_trial(study, trial):
+        mlflow.log_metric("cv_score", trial.value, step=trial.number)
+        mlflow.log_metric("best_cv_score_so_far", study.best_value, step=trial.number)
+        for name, value in trial.params.items():
+            mlflow.log_metric(name, value, step=trial.number)
+    return log_trial
 
 
 def nested_cv(texts, labels, groups, embeddings=None, n_trials=8, n_outer=5, n_inner=3, n_jobs=3, seed=0):
@@ -149,7 +164,18 @@ def main():
         print(pd.DataFrame({"mean": scores.mean(), "std": scores.std()}).round(3))
         return
 
-    result = tune(df["text"], df["model"], groups, embeddings, args.trials, seed=args.seed, n_jobs=args.jobs)
+    use_mlflow = bool(os.environ.get("MLFLOW_TRACKING_URI"))   # set it to log the search to MLflow
+    callbacks = [mlflow_callback()] if use_mlflow else None
+    try:
+        result = tune(df["text"], df["model"], groups, embeddings, args.trials, seed=args.seed, n_jobs=args.jobs,
+                      callbacks=callbacks)
+        if use_mlflow:
+            import mlflow
+            mlflow.log_dict(result, "tuning_result.json")
+    finally:
+        if use_mlflow:
+            import mlflow
+            mlflow.end_run()
     result["note"] = ("scores come from the same folds that picked the settings, so they are a little optimistic; "
                       "run with --nested for an honest comparison")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

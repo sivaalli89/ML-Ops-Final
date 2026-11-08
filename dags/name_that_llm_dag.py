@@ -1,4 +1,4 @@
-"""Retrain Name That LLM: group the prompts, tune with Optuna, train, and check the score.
+"""Retrain Name That LLM: group the prompts, tune with Optuna, train, check the score, and register the model.
 
 Trigger it from the Airflow page, or change schedule=None to "@weekly" to retrain every week.
 Every task runs inside the Airflow container, where the project is installed and ./data and
@@ -52,4 +52,11 @@ with DAG(
         ),
     )
 
-    check_data >> find_prompt_groups >> tune_with_optuna >> train_model >> evaluate_model
+    # logs the run to MLflow, adds a new registry version (with a semantic version tag), and makes it the
+    # "champion" that the API serves only if its score is at least as good as the current champion's
+    register_model = BashOperator(
+        task_id="register_model",
+        bash_command="python -m name_that_llm.registry",
+    )
+
+    check_data >> find_prompt_groups >> tune_with_optuna >> train_model >> evaluate_model >> register_model

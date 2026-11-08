@@ -3,7 +3,9 @@
     uvicorn api.main:app --port 8000
 
 Settings (environment variables):
-    MODEL_PATH       saved model, default artifacts/model.joblib
+    MLFLOW_TRACKING_URI + MODEL_NAME   load the "champion" version from the MLflow Model Registry
+    MODEL_VERSION    with the two above: load this registry version instead of the champion
+    MODEL_PATH       saved model file, used when the registry is not set up or has no champion yet
     USE_EMBEDDINGS   "true" to blend in DistilBERT (needs PyTorch + sentence-transformers), default false
 """
 import os
@@ -22,10 +24,25 @@ MAX_PASSAGES = 5000
 state = {}
 
 
+def load_model():
+    """Registry champion if the registry is set up, otherwise the saved file. Returns (bundle, info)."""
+    if os.environ.get("MLFLOW_TRACKING_URI") and os.environ.get("MODEL_NAME"):
+        try:
+            from name_that_llm.registry import load_champion
+            bundle, info = load_champion(os.environ["MODEL_NAME"], os.environ.get("MODEL_VERSION") or None)
+            return bundle, {"source": "registry", **info}
+        except Exception as error:   # registry down, or nothing registered yet
+            print(f"could not load from the registry ({error}); trying the model file", flush=True)
+
+    model_path = Path(os.environ.get("MODEL_PATH", "artifacts/model.joblib"))
+    if model_path.exists():
+        return joblib.load(model_path), {"source": "file", "path": str(model_path)}
+    return None, None
+
+
 @asynccontextmanager
 async def lifespan(app):
-    model_path = Path(os.environ.get("MODEL_PATH", "artifacts/model.joblib"))
-    state["bundle"] = joblib.load(model_path) if model_path.exists() else None
+    state["bundle"], state["model_info"] = load_model()
     state["use_embeddings"] = os.environ.get("USE_EMBEDDINGS", "false").lower() == "true"
     yield
     state.clear()
@@ -57,6 +74,7 @@ def health():
     return {
         "status": "ok",
         "model_loaded": state.get("bundle") is not None,
+        "model": state.get("model_info"),
         "embeddings": state.get("use_embeddings", False),
     }
 

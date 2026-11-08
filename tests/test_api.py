@@ -52,3 +52,44 @@ def test_missing_model_gives_503(tmp_path, monkeypatch):
     with TestClient(app) as test_client:
         assert test_client.get("/health").json()["model_loaded"] is False
         assert test_client.post("/predict", json={"passages": ["some text"]}).status_code == 503
+
+
+def test_api_loads_the_champion_from_the_registry(toy_data, tmp_path, monkeypatch):
+    pytest.importorskip("mlflow")
+    import mlflow
+    from name_that_llm.registry import register_candidate
+
+    uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    monkeypatch.setenv("MODEL_NAME", "name_that_llm")
+    mlflow.set_tracking_uri(uri)
+    bundle = fit_bundle(toy_data["text"], toy_data["model"], toy_data["prompt_id"].to_numpy())
+    joblib.dump(bundle, tmp_path / "model.joblib")
+    register_candidate(tmp_path / "model.joblib", 0.5)
+
+    from api.main import app
+    with TestClient(app) as test_client:
+        body = test_client.get("/health").json()
+    assert body["model_loaded"] is True
+    assert body["model"]["source"] == "registry"
+    assert body["model"]["semver"] == "0.1.0"
+
+
+def test_api_falls_back_to_the_file_when_the_registry_is_empty(toy_data, tmp_path, monkeypatch):
+    pytest.importorskip("mlflow")
+    import mlflow
+
+    uri = f"sqlite:///{tmp_path / 'empty.db'}"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    monkeypatch.setenv("MODEL_NAME", "name_that_llm")
+    mlflow.set_tracking_uri(uri)
+    bundle = fit_bundle(toy_data["text"], toy_data["model"], toy_data["prompt_id"].to_numpy())
+    joblib.dump(bundle, tmp_path / "model.joblib")
+    monkeypatch.setenv("MODEL_PATH", str(tmp_path / "model.joblib"))
+
+    from api.main import app
+    with TestClient(app) as test_client:
+        body = test_client.get("/health").json()
+    assert body["model"]["source"] == "file"

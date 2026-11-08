@@ -1,6 +1,7 @@
-# Serve the model:      docker compose up --build api
+# Serve the model:      docker compose up --build        (API on :8000, MLflow on :5000)
 # Run the pipeline too: docker compose --profile pipeline up --build
 #   Airflow page: http://localhost:8080  (login admin / the password in .env, default "admin")
+#   MLflow page:  http://localhost:5000  (runs, model versions, which one is the champion)
 #   Then switch on and trigger the DAG "name_that_llm_training". Needs train.csv in ./data
 #   and about 8 GB of memory given to Docker.
 # Settings can go in a .env file (see .env.example).
@@ -19,6 +20,7 @@ x-airflow: &airflow
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-change-me}
     NAME_THAT_LLM_HOME: /opt/airflow
+    MLFLOW_TRACKING_URI: http://mlflow:5000
   volumes:
     - ./dags:/opt/airflow/dags
     - ./data:/opt/airflow/data
@@ -26,6 +28,8 @@ x-airflow: &airflow
     - ./logs:/opt/airflow/logs
   depends_on:
     postgres:
+      condition: service_healthy
+    mlflow:
       condition: service_healthy
 
 services:
@@ -36,13 +40,33 @@ services:
     volumes:
       - ./artifacts:/models:ro
     environment:
-      MODEL_PATH: /models/model.joblib
+      MODEL_PATH: /models/model.joblib        # used if the registry has no champion yet
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_NAME: name_that_llm               # serve the registry's "champion" version of this model
+      MLFLOW_HTTP_REQUEST_MAX_RETRIES: "1"    # fail fast to the file if MLflow is not up
+      MLFLOW_HTTP_REQUEST_TIMEOUT: "5"
       USE_EMBEDDINGS: "false"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
       timeout: 5s
       retries: 5
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.19.0
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow-data/mlflow.db
+      --artifacts-destination /mlflow-data/artifacts --serve-artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow-data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   postgres:
     image: postgres:16-alpine
@@ -83,8 +107,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      mlflow:
+        condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
 
 volumes:
   postgres-data:
+  mlflow-data:

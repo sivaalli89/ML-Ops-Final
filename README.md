@@ -14,11 +14,15 @@ The long explanation is in [WORKBOOK_EXPLAINED.md](WORKBOOK_EXPLAINED.md), and t
 |---|---|
 | TF-IDF style model | 0.477 |
 | + 10% DistilBERT blend (hand-picked settings) | 0.521 |
-| + Optuna-tuned settings | 0.532 (optimistic: see below) |
+| + Optuna-tuned settings, scored on the folds that picked them | 0.532 (too optimistic) |
+| Hand-picked settings, honest nested check | 0.520 |
+| Optuna-tuned settings, honest nested check | 0.520 |
 
-The tuned score is measured on the same folds that picked the settings, so it is a little too good. For a fair
-comparison run `python -m name_that_llm.tune --nested`, which tunes inside each fold and tests on prompts the search
-never saw. All numbers are local estimates, not Kaggle scores.
+**Tuning did not help.** The 0.532 comes from scoring on the same folds the search used. The honest check
+(`python -m name_that_llm.tune --nested`: tune inside each fold, test on prompts the search never saw) gives 0.520
+both ways: in four of five folds the search just kept the hand-picked settings. That check used 6 trials and 3 inner
+folds, a lighter search than the 12-trial run, so a bigger search might still find something. Treat 0.52 as the
+real level. All numbers are local estimates, not Kaggle scores.
 
 ## Notebook or package?
 
@@ -65,22 +69,46 @@ Two parts, both started from `docker-compose.yml`:
 
 | Part | Command | What it does |
 |---|---|---|
-| **API** | `docker compose up --build` | Serves the model from `artifacts/model.joblib` on http://localhost:8000 |
+| **API + MLflow** | `docker compose up --build` | API on http://localhost:8000 (serves the registry's champion model, or `artifacts/model.joblib` if there is none yet); MLflow on http://localhost:5000 |
 | **Training pipeline** | `docker compose --profile pipeline up --build` | Airflow on http://localhost:8080 (login `admin` / `admin`, change it in `.env`) |
 
 The Airflow DAG `name_that_llm_training` runs, in order: check the data, find prompt groups, **tune with Optuna**,
-train, evaluate. Switch it on and click *Trigger DAG w/ config* to choose the number of Optuna trials. It reads
+train, evaluate, **register the model**. Switch it on and click *Trigger DAG w/ config* to choose the number of Optuna trials. It reads
 `train.csv` and the embeddings from `./data` and writes the model, `best_params.json` and `metrics.json` to
 `./artifacts`, which is the same folder the API reads. Restart the API (or just `docker compose restart api`) to
 load a newly trained model.
 
-Each run overwrites `artifacts/model.joblib`, even if the new score is worse. Keeping only better models comes
-with the MLflow registry (planned).
+`artifacts/model.joblib` is always the latest trained model. What the API serves is decided by the registry
+(see *Model versioning*).
 
 Give Docker about 8 GB of memory: tuning builds large feature tables. The images are slim and have no PyTorch; the
 DistilBERT numbers come from the saved `data/embeddings/distilbert.npy`.
 
 Without Docker you can do the same by hand with the commands in section A.
+
+## Model versioning
+
+Models are versioned in the **MLflow Model Registry** (http://localhost:5000 in Docker).
+
+- Every registered model gets a **registry number** (1, 2, 3 ...) and a **semantic version tag** such as `0.1.2`.
+  `X.Y` comes from `__version__` in `src/name_that_llm/__init__.py`: raise it when the features or model code change.
+  `Z` goes up by one for every retrain under the same `X.Y`.
+- The alias **`champion`** marks the version the API serves. A new version becomes the champion only if its
+  cross-validated score is at least as good as the champion's (`--min-gain` demands a margin). Otherwise it is
+  kept, tagged `not promoted`, and the old champion stays. A replaced champion is tagged `retired`.
+- Each version links to its run, which holds the settings, the scores, `metrics.json` and `best_params.json`.
+  Optuna's search is logged as its own run (one point per trial) when `MLFLOW_TRACKING_URI` is set.
+- The API loads `models:/name_that_llm@champion` at startup. Set `MODEL_VERSION=2` to pin a version, which also
+  works as a rollback. `GET /health` shows which version is loaded.
+
+Without Docker, point MLflow at a local file and register by hand:
+
+```bash
+export MLFLOW_TRACKING_URI=sqlite:///mlflow.db          # Windows: set MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+python -m name_that_llm.train --cv --fit --metrics-out artifacts/metrics.json
+python -m name_that_llm.registry                        # registers it and promotes it if it beats the champion
+mlflow ui --backend-store-uri sqlite:///mlflow.db       # browse runs and versions
+```
 
 ## Using the API
 
@@ -98,7 +126,7 @@ first. A batch under 54 passages can't be grouped; it is answered by the plain c
 ## Project layout
 
 ```
-src/name_that_llm/   grouping, group_ops, features, model, train, tune (Optuna), predict
+src/name_that_llm/   grouping, group_ops, features, model, train, tune (Optuna), registry (versioning), predict
 dags/                Airflow DAG: the training pipeline
 docker/              Airflow image
 api/                 FastAPI service
@@ -111,9 +139,9 @@ Dockerfile, docker-compose.yml
 
 | Part | State |
 |---|---|
-| Package, tuning, API, tests | Working. 25 tests pass, and the API and the tuning have been run on the real data. |
-| Docker images and the Airflow pipeline | **Written but not yet run.** The compose file and DAG parse, but nobody has built the images or started Airflow. Expect to fix small problems on first run. |
-| MLflow tracking and registry, monitoring and drift checks, CI | Not built yet. |
+| Package, tuning, versioning, API, tests | Working. 36 tests pass. Tuning and registering have been run on the real data against a local MLflow store. |
+| Docker images, the MLflow server and the Airflow pipeline | **Written but not yet run.** The compose file and DAG parse, but nobody has built the images or started the services. Expect to fix small problems on first run. |
+| Monitoring and drift checks, CI | Not built yet. |
 
 ## Contributing
 
