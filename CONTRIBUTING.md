@@ -2,39 +2,24 @@
 
 ## Workflow
 
-1. Pick an issue (or make one) and say you're taking it.
+1. Pick a task and say you are taking it.
 2. Branch from an up-to-date `main`: `git checkout -b feature/short-name` (or `fix/...`, `docs/...`).
-3. Make small commits with a clear first line, e.g. `Add Evidently drift report`.
-4. Run `pytest` before you push. It takes a few seconds and needs no data or Docker.
-5. Open a pull request into `main`. Describe what changed and how you checked it.
+3. Make small commits with a clear first line, for example `Add a chart of scores per fold`.
+4. Run the notebook top to bottom before you push, so it still works and its saved results are current.
+5. Open a pull request into `main` and describe what changed and how you checked it.
 6. Someone else reviews and approves. Nobody pushes straight to `main`, and you don't merge your own PR.
 
 ## Setup
 
-See the README (section A). You only need Docker if you work on the API container or the full stack.
+See the README: create a virtual environment, `pip install -r requirements.txt`, put `train.csv` in `data/`.
 
 ## Rules of thumb
 
-- **No data, models or secrets in git.** `data/`, `artifacts/`, `mlruns/` and `.env` are ignored on purpose.
-  Share data with DVC; share settings through `.env.example`.
-- **Keep the model code in `src/name_that_llm/`.** The notebook is only an explanation with its own simple
-  code; it is not part of the pipeline.
-- **Test what you add.** Use the toy data in `tests/conftest.py` so tests stay fast and need nothing else.
-- **Bump the version when the model changes.** If you change the features or the model code, raise the minor
-  number of `__version__` in `src/name_that_llm/__init__.py` (0.1.0 -> 0.2.0) in the same PR. Retrains
-  under the same number get their last digit automatically. See *Model versioning* in the README.
-- **Honest scores only.** Always evaluate on whole held-out prompts (grouped CV), never random rows.
-  Say which numbers are local estimates.
+- **No data or secrets in git.** `data/` is ignored on purpose, because the competition data is not ours to share.
+- **Keep the notebook simple and top-to-bottom.** Short cells, plain names, a sentence or two of explanation before each
+  step. Someone should be able to read it without knowing the code.
+- **Honest scores only.** Always evaluate on whole held-out prompts (split by group), never random rows. Say which numbers
+  are local estimates and which are not.
+- **Don't save private paths in the notebook.** Check that output cells don't contain folders from your computer.
 - **Keep PRs small.** One idea per PR is easier to review.
-- **Note AI help.** The course requires listing assisting tools in submitted work; add yours to the PR
-  description or the README.
-
-## Who owns what
-
-| Area | Owner |
-|---|---|
-| Data, grouping, pipeline (DVC, Airflow) | _name_ |
-| Model, experiments, MLflow, tests | _name_ |
-| API, Docker, monitoring | _name_ |
-
-(Fill in the names. If you add a `CODEOWNERS` file, GitHub will request reviews from these people automatically.)
+- **Note AI help.** The course requires listing assisting tools in submitted work; add yours to the PR description or the README.

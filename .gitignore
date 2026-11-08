@@ -1,18 +1,18 @@
-# data is versioned with DVC (added later), never with git
+# data stays out of git (the competition data is not ours to share)
 data/*
 !data/.gitkeep
-# model + tracking artifacts
+
+# python / notebooks
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+
+# old pipeline outputs, if you still have them
 artifacts/
 mlruns/
 mlflow.db
-# python
-__pycache__/
-*.pyc
-.pytest_cache/
-.ipynb_checkpoints/
-*.egg-info/
-.venv/
+
 # OS / editor
 .DS_Store
 .vscode/
-logs/

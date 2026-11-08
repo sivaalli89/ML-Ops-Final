@@ -1,24 +1,19 @@
 # What the "Name That LLM" workbook does (under the hood)
 
-This file explains the method and the model versioning. For how to install and run things, see the [README](README.md).
-The notebook `notebooks/name_that_llm.ipynb` explains the method with simple code and is not connected to the pipeline; your original version is in git history (first commit).
+This file explains the method and the experiments in more detail. For how to run things, see the [README](README.md).
+Everything runs in one notebook, `notebooks/name_that_llm.ipynb`. Your original notebook is in git history (first commit).
 
 ## Folder guide
 
 ```
 ML Ops Final/
-├─ README.md, CONTRIBUTING.md   how to run it, how to contribute
+├─ README.md, CONTRIBUTING.md   how to run it, how to work on it
 ├─ WORKBOOK_EXPLAINED.md        this file
-├─ notebooks/   name_that_llm.ipynb      simple, self-contained explanation of the method
-├─ src/name_that_llm/                    the real code (grouping, features, model, train, tune, registry, predict)
-├─ api/         FastAPI service that serves the model
-├─ dags/        Airflow pipeline: group -> tune -> train -> evaluate -> register
-├─ docker/, Dockerfile, docker-compose.yml   images for the API, MLflow, Airflow
-├─ tests/       unit and end-to-end tests on made-up data
-├─ data/        train.csv, test.csv (not in git), train_with_groups.csv, embeddings/ (saved DistilBERT numbers)
-├─ artifacts/   latest trained model, best_params.json, metrics.json (not in git)
-├─ figures/     flow chart, 2D model charts, notebook plots
-└─ research/    usenixsecurity25-pasquini.pdf
+├─ notebooks/   name_that_llm.ipynb      the whole project, with results saved in it
+├─ data/        train.csv (not in git), embeddings/ (cached DistilBERT numbers)
+├─ figures/     flow chart and charts used in this file
+├─ research/    usenixsecurity25-pasquini.pdf
+└─ requirements.txt
 ```
 
 ## 0. The whole thing in one picture
@@ -52,7 +47,6 @@ plain 0.309 → + centering 0.381 → + assignment 0.422 → + skeleton features
 |---|---|
 | `data/train.csv` | 2,699 rows: `id, prompt_id, text, model` |
 | `data/test.csv` | only 3 rows here (a tiny sample): `id, text` only (no model, no prompt) |
-| `data/train_with_groups.csv` | train + a recovered `group` column (made by `python -m name_that_llm.grouping`) |
 | `figures/group_recovery.png`, `figures/grouped_cv_baseline.png` | figures from the first version of the notebook |
 
 ### The hidden structure
@@ -165,144 +159,40 @@ Same 5-fold GroupKFold. Baseline = skeleton features, centring, assignment.
 
 The DistilBERT weight was picked on the same folds, so 0.521 is a little optimistic (a realistic gain is perhaps +0.02 to +0.04). This blend is section 7 of the notebook. These scores are local cross-validation estimates, not Kaggle scores.
 
-Tuning with Optuna did **not** help once checked honestly. Scored on the folds that picked the settings it reached 0.532,
-but tuning inside each fold and testing on untouched prompts (`python -m name_that_llm.tune --nested`) gives 0.520 for
-both the hand-picked and the tuned settings: in four of five folds the search simply kept the hand-picked values.
-That check used 6 trials and 3 inner folds, a lighter search than the 12-trial run.
+Tuning with Optuna did **not** help once checked honestly. This was done in the earlier pipeline version (see section 5).
+Scored on the folds that picked the settings it reached 0.532, but tuning inside each fold and testing on untouched prompts
+gives 0.520 for both the hand-picked and the tuned settings: in four of five folds the search simply kept the hand-picked
+values. That check used 6 trials and 3 inner folds, a lighter search than the 12-trial run. The notebook keeps the
+hand-picked settings.
 
 ## 3. Things to know
 - **Test-time requirement.** Centering and assignment both need the test passages grouped by prompt. You must cluster `data/test.csv` with the same recipe (it's small, so check the cluster sizes carefully: assignment assumes ≤18 per group, and 18 distinct models per group).
 - **`prompt_id` is only used for grading** the clustering (ARI). The pipeline itself never reads it.
 - **The research PDF (`research/usenixsecurity25-pasquini.pdf`) is *LLMmap* (USENIX Security 2025).** It fingerprints 42 LLM versions at >95% accuracy, but with chosen probe questions and ~8 responses per model, so it is an easier setup than one free-form passage. Ideas that transfer: e5 embeddings (`multilingual-e5-large-instruct`) feeding a small transformer, contrastive training, and pooling several samples (your assignment step does a version of this). It does **not** contain the markdown, function-word or first-word features, and its Fig. 6 is a 2D map of learned signatures, not a phrase list. So the notebook's comments "style features from the paper" and "paper Fig. 6" must refer to some other paper, which I haven't identified.
-- **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook and the package; the two-stage classifier was dropped.)
-- **Notebook and package.** The notebook is an explanation with its own simplified code. It is not connected to the
-  package, Airflow, Optuna or the registry, so running it does not change the model the API serves.
-- **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model), MLflow logging of `cv_scheme`, `k`, `cluster_quality`.
+- **Not done yet:** contrastive training, a run on the real test set, and e5 embeddings in the blend. (The skeleton features and the DistilBERT blend are in the notebook; the two-stage classifier was dropped.)
+- **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model).
 
 ## 4. How to re-run
-See the [README](README.md): section A for plain Python, section B for Docker. The notebook reads `../data/train.csv`
-and builds dense ~35k-column matrices, so give it a few GB of RAM.
+See the [README](README.md). The notebook reads `../data/train.csv` and builds dense ~35k-column matrices, so give it a few GB of
+RAM. A full run takes about 6 to 8 minutes.
 
-## 5. Model versioning: how it works
+## 5. The earlier pipeline version (archived)
 
-**The problem it solves.** Every retrain produces a new model file. Without versioning you cannot say which model is
-serving, how good it was, what settings made it, or go back to the one that worked yesterday. Retraining could also
-silently replace a good model with a worse one. The registry fixes this by keeping every model as a numbered version and
-promoting a new one only if it earns it.
+Before the project was reduced to the notebook, it also had:
 
-**The tool.** MLflow's *Model Registry* (a page at http://localhost:5000 in Docker). It stores three things:
-
-| Piece | What it is |
+| Part | What it did |
 |---|---|
-| **Run** | One training event: the settings (`style_c` ...), the scores, the model file, `metrics.json`, `best_params.json` |
-| **Model version** | A numbered copy of the model (1, 2, 3 ...) linked to the run that made it, with tags |
-| **Alias `champion`** | A movable label on one version: "this is the one in service" |
+| A `.py` package (`src/name_that_llm/`) | the notebook's steps as reusable code, run from the command line |
+| Optuna tuning | searched three settings, scored on held-out prompts |
+| An MLflow model registry | kept every trained model as a numbered version with a semantic version tag, and promoted a new one to "champion" only if its score was not worse |
+| A FastAPI service | `/predict` took a batch of passages and returned a guessed model for each |
+| An Airflow pipeline | group, tune, train, evaluate and register as six tasks in order |
+| Tests and Docker files | 38 tests on made-up data; images for the API, MLflow and Airflow |
 
-**Two version numbers, on purpose.**
-- The **registry number** (1, 2, 3 ...) is automatic and only goes up. It is the exact identity of a model.
-- The **semantic version** (`0.1.2`) tells people how big a change was. `0.1` comes from `__version__` in
-  `src/name_that_llm/__init__.py`: raise it by hand when the features or the model code change (a different kind of model).
-  The last digit goes up by one automatically on every retrain under the same `0.1`, which is the "same recipe, new
-  training run" case.
+All of it is saved under the git tag `archive/pipeline-version`. To look at it: `git checkout archive/pipeline-version`
+(`git checkout -` to come back). The tag exists only on this computer until you run
+`git push origin archive/pipeline-version`.
 
-**What happens on a retrain** (the Airflow task `register_model`, or `python -m name_that_llm.registry`):
-
-```
-train + cross-validate  ->  candidate model, score 0.531
-           |
-           v
-register as the next version   -> registry #3, semver 0.1.2, tags: score, status
-           |
-           v
-compare with the champion's stored score
-     |                                   |
-  at least as good                    worse
-     |                                   |
-alias "champion" moves to #3         #3 is kept but tagged "not promoted"
-old champion tagged "retired"        the champion does not change
-```
-
-**An example history** (illustrative numbers):
-
-| Registry # | Semver | Score | Status |
-|---|---|---|---|
-| 1 | 0.1.0 | 0.520 | retired |
-| 2 | 0.1.1 | 0.505 | not promoted (worse than #1) |
-| 3 | 0.1.2 | 0.531 | **champion** |
-
-**How the API uses it.** On startup it loads `models:/name_that_llm@champion`, and `GET /health` reports the version it
-loaded. If MLflow is unreachable or has no champion yet, it falls back to `artifacts/model.joblib`. After a new champion is
-promoted, restart the API to pick it up.
-
-**Rolling back.** Set `MODEL_VERSION=1` for the API and restart it, which serves version 1 whatever the alias says.
-To make the rollback permanent, point the `champion` alias back at that version in the MLflow page.
-
-**Things to know about the promotion rule.**
-- Scores compare fairly only while the data and the prompt groups are the same. If the training data changes, the old
-  champion's stored score is out of date.
-- Fold-to-fold scores wobble by about 0.02, so a difference of 0.003 is noise. With the default `--min-gain 0`, a tie
-  promotes the newer model. Use `--min-gain 0.01` to demand a real improvement before anything changes.
-- The registry stores the model file as an artifact and does not run it. It is the record of what exists and what is in service.
-
-
-## 6. A plain-English guide to the .py files
-
-### Notebook or .py files?
-
-For **learning and explaining**, the notebook is better: you read a step, run it, and see the result right under it. That is
-why `notebooks/name_that_llm.ipynb` exists, and why it is kept simple.
-
-For **running the project for real**, you need `.py` files, because:
-
-- **Airflow** runs commands on a schedule, and a notebook is not a command.
-- **The API** has to be a program that stays running and answers requests.
-- **The tests** run automatically on every change, which they cannot do with a notebook.
-- **Teammates** can review and merge changes to a `.py` file line by line; a notebook's saved output makes that messy.
-
-So: notebook to understand it, `.py` files to run it. Both do the same steps in the same order.
-
-### What `python -m name_that_llm.train` means
-
-`name_that_llm` is a folder of `.py` files (a *package*). `python -m name_that_llm.train --cv` says "run the file `train.py`
-inside it, and give it the option `--cv`". Each file that can be run this way ends with a small `main()` function, which is the
-part that reads the options and runs. Everything else in a file is a tool that `main()` or another file uses.
-
-### The files, in plain words
-
-| File | What it does | Same as notebook |
-|---|---|---|
-| `src/name_that_llm/grouping.py` | Finds which passages answer the same prompt (`cluster_passages`), checks the groups are good (`cluster_quality`), removes the shared topic (`center_by_group`), and makes each model appear once per group (`assign_one_model_each`). Run it with `python -m name_that_llm.grouping` to write `data/train_with_groups.csv`. | sections 2 and 5 |
-| `src/name_that_llm/features.py` | Turns text into numbers: the three TF-IDF views (characters, words, skeleton) in `StyleFeatures`, the skeleton helper `make_skeleton`, and DistilBERT numbers in `embed_passages`. | sections 4 and 7 |
-| `src/name_that_llm/model.py` | `ModelBundle` is the trained model in one box: the features plus the two classifiers. `blend` mixes their answers 90/10. | section 7 |
-| `src/name_that_llm/train.py` | `fit_bundle` trains a model; `cross_validate` gives the honest score on prompts it has not seen. Run with `--cv` to score and `--fit` to train and save. | section 6 |
-| `src/name_that_llm/tune.py` | Uses Optuna to try different settings and see which score best. Run with `python -m name_that_llm.tune`. | *not in the notebook* |
-| `src/name_that_llm/registry.py` | Model versioning: saves each trained model as a numbered version in MLflow and decides if it becomes the champion (section 5 above). | *not in the notebook* |
-| `src/name_that_llm/predict.py` | `predict_models`: give it passages, get back a guessed model for each one. This is what the API calls. | the idea behind section 6 |
-| `src/name_that_llm/__init__.py` | Marks the folder as a package, and holds two small things: the version number and the project folder. | |
-| `api/main.py` | The web service: `/health` says if it is running and which model it loaded, `/predict` takes passages and returns guesses. | *not in the notebook* |
-| `dags/name_that_llm_dag.py` | The Airflow pipeline: check the data, group, tune, train, evaluate, register, as six tasks in order. | *not in the notebook* |
-| `tests/*.py` | Automatic checks that each piece still works, run with `pytest`. They use made-up data, so they take seconds. | |
-
-Support files that are not code: `requirements.txt` and `pyproject.toml` list the libraries needed, and `Dockerfile`,
-`docker/airflow.Dockerfile` and `docker-compose.yml` describe how to run the pieces in containers.
-
-### Where to start reading
-
-You do not need to read them all. A good order is:
-
-1. `grouping.py`: short, and it holds the two key tricks (centering and one-model-each).
-2. `features.py`: how a passage becomes numbers.
-3. `train.py`: how those pieces are put together and scored. Read `fit_bundle` and `cross_validate` first.
-
-Skip `tune.py`, `registry.py`, the API and the DAG until you need them. They are extra machinery around the same model, not
-different logic. If a function's job is unclear, look for the same step in the notebook: the table above says where.
-
-### Which one should I run?
-
-| I want to... | Run |
-|---|---|
-| see how it works | open the notebook and run it top to bottom |
-| train a model by hand | `python -m name_that_llm.grouping`, then `python -m name_that_llm.train --cv --fit` |
-| search for better settings | `python -m name_that_llm.tune --trials 15` |
-| have it all happen automatically and versioned | start Airflow and trigger the DAG (README, section B) |
-| get predictions | start the API and send passages to `/predict` |
+What was and was not verified: the Python code and the tests were run on the real data, and the registry was exercised
+against a local MLflow store. The Docker images, the MLflow server and the Airflow pipeline were written but never built or run.
+The one lasting finding is the honest tuning result in Step G: Optuna did not improve on the hand-picked settings.
