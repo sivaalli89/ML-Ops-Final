@@ -22,8 +22,8 @@ git clone https://github.com/sivaalli89/ML-Ops-Final.git
 cd ML-Ops-Final
 python -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
-pip install -e . --no-deps
+pip install -r requirements.txt     # pinned versions
+pip install -e ".[dev]"             # the package itself + pytest
 pytest                               # about 5 seconds, uses made-up data
 ```
 
