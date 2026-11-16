@@ -9,12 +9,15 @@ Everything runs in one notebook, `notebooks/name_that_llm.ipynb`. Your original 
 ML Ops Final/
 ├─ README.md, CONTRIBUTING.md   how to run it, how to work on it
 ├─ WORKBOOK_EXPLAINED.md        this file
-├─ notebooks/   name_that_llm.ipynb      the whole project, with results saved in it
+├─ notebooks/   name_that_llm.ipynb      the method and the training, with results saved in it
 ├─ data/        train.csv, test.csv and embeddings/ (cached DistilBERT numbers); kept by DVC, not by git
-├─ Dockerfile, docker-compose.yml, docker/   JupyterLab (B) and Airflow (C) in containers, for running the notebook the same way everywhere
-├─ dags/        run_notebook_dag.py: the Airflow trigger that runs the notebook
-├─ models/      model.joblib (kept by DVC) and model_info.json (version, score, data hash)
+├─ Dockerfile, docker-compose.yml, docker/   JupyterLab (B), and Airflow + MLflow + the API (C), in containers
+├─ dags/        train_pipeline_dag.py: the Airflow DAG (check data, run the notebook, register the model)
+├─ pipeline/    register_model.py (MLflow run, registry, promotion) and simulate_drift.py (the drift test)
+├─ service/     api.py (the FastAPI service that serves the champion model) and monitoring.py (its drift monitoring)
+├─ models/      model.joblib (kept by DVC), model_info.json (version, held-out score, data hash), holdout.csv, optuna_trials.csv
 ├─ runs/        executed copies of the notebook, one per Airflow run (not in git)
+├─ monitoring/  the API's request log and the drift test's results (not in git)
 ├─ .dvc/        DVC settings; data/*.dvc and models/*.dvc are the pointer files git keeps
 ├─ figures/     flow chart and charts used in this file
 ├─ research/    usenixsecurity25-pasquini.pdf
@@ -164,11 +167,15 @@ Same 5-fold GroupKFold. Baseline = skeleton features, centring, assignment.
 
 The DistilBERT weight was picked on the same folds, so 0.521 is a little optimistic (a realistic gain is perhaps +0.02 to +0.04). This blend is section 7 of the notebook. These scores are local cross-validation estimates, not Kaggle scores.
 
-Tuning with Optuna did **not** help once checked honestly. This was done in the earlier pipeline version (see section 5).
-Scored on the folds that picked the settings it reached 0.532, but tuning inside each fold and testing on untouched prompts
-gives 0.520 for both the hand-picked and the tuned settings: in four of five folds the search simply kept the hand-picked
-values. That check used 6 trials and 3 inner folds, a lighter search than the 12-trial run. The notebook keeps the
-hand-picked settings.
+Tuning with Optuna did **not** help once checked honestly, and that has now been seen twice.
+**First check (earlier pipeline version, see section 5).** Scored on the folds that picked the settings it reached 0.532, but
+tuning inside each fold and testing on untouched prompts gave 0.520 for both the hand-picked and the tuned settings: in four
+of five folds the search simply kept the hand-picked values (6 trials and 3 inner folds).
+**Second check (the notebook now, sections 8 and 9).** 20% of the prompts are held out first. Optuna searches `style_c`,
+`embedding_c` and `embedding_weight` on the other 80%, starting from the hand-picked values. None of its 20 trials scored better
+on the cross-validation folds (0.517 for the hand-picked values, and the best of 20 was the same point), so the deployed
+model uses the hand-picked settings, and its score on the held-out prompts is 0.478. That number comes from about 30 prompts and a
+model trained on 80% of the data, so it should be read as "about 0.48", not as a drop from 0.521.
 
 ## 3. Things to know
 - **Test-time requirement.** Centering and assignment both need the test passages grouped by prompt. You must cluster `data/test.csv` with the same recipe (it's small, so check the cluster sizes carefully: assignment assumes ≤18 per group, and 18 distinct models per group).
@@ -178,8 +185,8 @@ hand-picked settings.
 - **Next steps listed by the author:** e5 + contrastive training, two-stage (organization → model).
 
 ## 4. How to re-run
-See the [README](README.md): run it with Python on your computer, in a Docker container or under Airflow. The notebook reads `../data/train.csv` and builds dense
-~55k-column matrices, so give it a few GB of RAM. A full run takes about 8 minutes on your own Python and 12 to 15 in a container (the README explains why).
+See the [README](README.md): run the notebook with Python on your computer or in a Docker container, or run the whole system (Airflow, MLflow, the API) with one compose command. The notebook reads `../data/train.csv` and builds dense
+~55k-column matrices, so give it a few GB of RAM. A full run takes about 26 minutes under Airflow (measured; the Optuna section and the extra fits roughly doubled the time of the earlier 12 to 15 minutes in a container, and 6 to 7 on a local Python); the README explains why.
 
 ## 5. The earlier pipeline version (archived)
 
@@ -190,32 +197,65 @@ Before the project was reduced to the notebook, it also had:
 | A `.py` package (`src/name_that_llm/`) | the notebook's steps as reusable code, run from the command line |
 | Optuna tuning | searched three settings, scored on held-out prompts |
 | An MLflow model registry | kept every trained model as a numbered version with a semantic version tag, and promoted a new one to "champion" only if its score was not worse |
-| A FastAPI service | `/predict` took a batch of passages and returned a guessed model for each |
+| A larger FastAPI service | `/predict` took a batch of passages and returned a guessed model for each (a smaller one, `service/api.py`, is back; see section 6) |
 | An Airflow pipeline | group, tune, train, evaluate and register as six tasks in order |
 | Tests and Docker files | 38 tests on made-up data; images for the API, MLflow and Airflow |
 
 All of it is saved under the git tag `archive/pipeline-version`. To look at it: `git checkout archive/pipeline-version`
-(`git checkout -` to come back). The tag exists only on this computer until you run
-`git push origin archive/pipeline-version`.
+(`git checkout -` to come back). The tag exists only on the computer that made it until someone runs
+`git push origin archive/pipeline-version`; without it, the same version is the commit `dfdf20d`, which is in this repository's history.
 
 What was and was not verified: the Python code and the tests were run on the real data, and the registry was exercised
 against a local MLflow store. The Docker images, the MLflow server and the Airflow pipeline were written but never built or run.
 The one lasting finding is the honest tuning result in Step G: Optuna did not improve on the hand-picked settings.
 
-## 6. Triggering the notebook, and versioning data and models
+## 6. Around the notebook: trigger, tracking, registry, serving, monitoring, versioning
 
-**Trigger.** A notebook does nothing until someone runs it. Airflow (README, Option C) is the trigger: it runs the notebook on a
-button press or a schedule, logs each run, and saves an executed copy of the notebook for that run in `runs/`. The DAG is a
-single short file, `dags/run_notebook_dag.py`, with three tasks: check the data is there, run the notebook, print the model info.
+The notebook does the thinking and the training; everything below runs it, records it or serves what it saved. None of it
+changes the method.
+
+**Trigger (Airflow).** A notebook does nothing until someone runs it. The DAG `train_pipeline` (`dags/train_pipeline_dag.py`)
+runs it on a button press or a schedule, logs each run and keeps an executed copy of the notebook in `runs/`. Three tasks:
+check the data is there, run the notebook, register the model. The DAG has no model code.
+
+**Held-out prompts and Optuna (notebook sections 8 and 9).** 20% of the prompts are set aside before anything is tuned. Optuna
+searches three settings (`style_c`, `embedding_c`, `embedding_weight`) on the other 80%, using 5 folds split by prompt. Fitting
+the slow style model is done once per candidate C and fold, and Optuna chooses among those saved results, which is why the
+search is cheap. The final model is trained on the 80% and scored on the held-out 20%, which no choice depended on. The model
+is deliberately not refitted on everything afterwards: the held-out prompts have to stay unseen so they can validate the
+deployed service and serve as the monitoring baseline.
+
+**Experiment tracking and registry (MLflow).** The last Airflow task, `pipeline/register_model.py`, logs a run (settings and
+scores, one nested run per Optuna trial, the model files and the executed notebook), registers the model as a new version and
+tags it with a semantic version: the notebook's `MODEL_VERSION` if it is free, else the next patch number. The alias
+`champion` moves to the new version only if its held-out score is at least as good as the champion's. A worse model is kept
+in the registry but not served. This is the part the first version had and that was removed with the `.py` package; it is back
+in a smaller form that reads the notebook's output files instead of importing the notebook's code.
+
+**Serving (FastAPI).** `service/api.py` loads the champion from the registry and exposes `POST /predict`, `GET /model`, `GET /monitor`,
+`GET /dashboard` and `GET /health`. It repeats the notebook's helper functions (centering, assignment, blending) for one
+prompt's passages, since the saved model holds only scikit-learn objects. It asks the registry for the champion every 10
+seconds at most, so a newly promoted model is live without a restart.
+
+**Monitoring (`service/monitoring.py`).** Production has no labels, so the service watches its inputs and the model's confidence:
+eight numbers per passage (lengths, word length, punctuation, unknown words, known word pairs, similarity to the other passages
+in the request, confidence). The baseline is the same numbers for half of the held-out prompts, computed by the service itself
+when it loads a model. Evidently 0.7.23's data drift report compares recent passages with it, using the normalised Wasserstein
+distance (how far the values moved, in units of the baseline's spread; drift above 1.0). A p-value test was tried first and
+rejected: the passages of one prompt resemble each other, so they are not independent rows, and it raised false alarms on clean
+data (6 of 10 samples). Malformed requests are counted too. The other half of the held-out prompts is the clean data for
+`pipeline/simulate_drift.py`, which also corrupts it in five ways (truncating, random characters, shuffled words, mixed prompts,
+broken request schema) and records what the monitor reports. Results are in the README.
 
 **Data versioning.** `train.csv` is tracked by DVC, which stores the file by its content hash and gives git a small pointer.
 Changing the data produces a new hash and, after `dvc add` and a commit, a new version (`data-v2`). Going back is a git
 checkout plus `dvc checkout`.
 
-**Model versioning.** Notebook section 8 trains on all passages and saves `models/model.joblib` and `models/model_info.json`.
-The info file holds the version number, the cross-validated score, the settings and the hash of the training data, so a
-model always says which data produced it. Versioning the file works the same way as for data (`dvc add`, commit, tag
-`model-v0.1.0`).
+**Model file versioning.** Notebook section 9 saves `models/model.joblib`, `model_info.json`, `holdout.csv` and
+`optuna_trials.csv`. The info file holds the version number, the held-out and cross-validated scores, the settings and the hash
+of the training data, so a model always says which data produced it. The model file is versioned like the data (`dvc add`,
+commit, tag `model-v0.2.0`). DVC and tags answer "what existed when"; the MLflow registry answers "what is serving now".
 
-**What this does not do.** It records and restores versions. It does not decide automatically which model is in service or
-refuse a worse one; the archived pipeline version had an MLflow registry that did (section 5).
+**What this does not do.** It has no unit tests (the archived version had 38), no alerting beyond the dashboard and the JSON
+status, no login on any page, and it runs on one machine (SQLite for Airflow and MLflow, no shared storage). See *What has been
+tested* in the README for what was and was not run.

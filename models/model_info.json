@@ -1,13 +1,16 @@
 {
-  "version": "0.1.0",
-  "trained_at": "2026-11-08T16:13:22",
-  "balanced_accuracy": 0.521,
-  "how_scored": "5-fold cross-validation, whole prompts held out, centering + assignment (section 7)",
+  "version": "0.2.0",
+  "trained_at": "2026-11-16T03:56:33",
+  "balanced_accuracy": 0.478,
+  "how_scored": "held-out prompts: 20% of the prompts, never used for training or for choosing the settings; centering + assignment",
+  "cv_balanced_accuracy": 0.517,
   "settings": {
     "style_c": 1,
     "embedding_c": 0.1,
     "embedding_weight": 0.1
   },
-  "training_passages": 2699,
+  "optuna_trials": 20,
+  "training_passages": 2171,
+  "holdout_passages": 528,
   "train_csv_md5": "61f581c1bdd4664d588a7c23c413ba0a"
 }

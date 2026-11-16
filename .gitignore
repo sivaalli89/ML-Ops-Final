@@ -24,3 +24,8 @@ mlflow.db
 # OS / editor
 .DS_Store
 .vscode/
+
+# made by the notebook / the service from train.csv, so not versioned
+models/holdout.csv
+monitoring/*
+!monitoring/.gitkeep
