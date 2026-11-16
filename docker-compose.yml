@@ -4,9 +4,14 @@
 # Run the notebook without opening Jupyter (the saved copy goes to your project folder, not over the original):
 #   docker compose run --rm notebook jupyter nbconvert --to notebook --execute name_that_llm.ipynb --output-dir ../data --output ran
 #
-# Run the notebook with Airflow (on demand or on a schedule):   docker compose --profile airflow up --build airflow
-#   Airflow page: http://localhost:8080  (login admin / admin, change it with AIRFLOW_ADMIN_PASSWORD)
-#   Switch on the DAG "run_notebook" and press play. Executed copies go to ./runs, the model to ./models.
+# The whole system (train with Airflow, register in MLflow, serve and monitor with the API):
+#   docker compose --profile airflow --profile api up --build -d
+#   Airflow   http://localhost:8080  (login admin / admin, change it with AIRFLOW_ADMIN_PASSWORD); press play on "train_pipeline"
+#   MLflow    http://localhost:5050  experiments and the model registry (change the port with MLFLOW_PORT in .env)
+#   API       http://localhost:8000/docs   and the monitor at http://localhost:8000/dashboard
+#
+# Drift test against the running API (clean data, then corrupted data):
+#   docker compose --profile api --profile drift run --rm drift-test
 #
 # Settings can go in a .env file (see .env.example).
 services:
@@ -24,6 +29,22 @@ services:
       - ./data:/app/data
       - ./models:/app/models
 
+  # Experiment tracking and the model registry. Started together with Airflow or the API, which both use it.
+  mlflow:
+    profiles: ["airflow", "api"]
+    build:
+      context: .
+      dockerfile: docker/mlflow.Dockerfile
+    ports:
+      - "127.0.0.1:${MLFLOW_PORT:-5050}:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   # One container: the scheduler and the web page together, with a small SQLite database kept in a volume.
   # Fine for running one notebook; a bigger setup would use Postgres and separate containers.
   airflow:
@@ -31,15 +52,21 @@ services:
     build:
       context: .
       dockerfile: docker/airflow.Dockerfile
+    depends_on:
+      mlflow:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8080:8080"
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-change-me}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      GIT_PYTHON_REFRESH: quiet            # MLflow looks for git to record the commit; there is none in the container
     volumes:
       - airflow-home:/opt/airflow
       - ./dags:/opt/airflow/dags
+      - ./pipeline:/opt/airflow/pipeline
       - ./notebooks:/opt/airflow/notebooks
       - ./data:/opt/airflow/data
       - ./models:/opt/airflow/models
@@ -55,5 +82,44 @@ services:
       timeout: 5s
       retries: 20
 
+  # Answers "which LLM wrote these passages?" with the champion model from the MLflow registry (see service/api.py).
+  # It looks for a new champion every few seconds, and logs what it sees to ./monitoring.
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      args:
+        INSTALL_EMBEDDINGS: ${INSTALL_EMBEDDINGS:-false}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ./monitoring:/app/monitoring
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # The drift test (pipeline/simulate_drift.py): sends clean, then corrupted, held-out passages to the API.
+  drift-test:
+    profiles: ["drift"]
+    build:
+      context: .
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["python", "/app/pipeline/simulate_drift.py", "--api", "http://api:8000"]
+    volumes:
+      - ./pipeline:/app/pipeline:ro
+      - ./models:/app/models:ro
+      - ./monitoring:/app/monitoring
+
 volumes:
   airflow-home:
+  mlflow-data:
